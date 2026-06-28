@@ -33,6 +33,9 @@ class Advertisement(Base):
     is_top: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[AdStatus] = mapped_column(Enum(AdStatus), default=AdStatus.active)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, onupdate=func.now(), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="advertisements")

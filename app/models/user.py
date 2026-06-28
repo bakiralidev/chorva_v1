@@ -12,8 +12,11 @@ class User(Base):
     phone_number: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepted_offer: Mapped[bool] = mapped_column(Boolean, default=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    preferred_lang: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     # Relationships
     advertisements: Mapped[list["Advertisement"]] = relationship("Advertisement", back_populates="user", cascade="all, delete-orphan")

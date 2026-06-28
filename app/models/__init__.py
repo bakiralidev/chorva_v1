@@ -4,6 +4,7 @@ from app.models.category import Category
 from app.models.region import Region
 from app.models.advertisement import Advertisement, AdStatus
 from app.models.image import Image
+from app.models.refresh_token import RefreshToken
 
 __all__ = [
     "Base",
@@ -12,5 +13,6 @@ __all__ = [
     "Region",
     "Advertisement",
     "AdStatus",
-    "Image"
+    "Image",
+    "RefreshToken"
 ]

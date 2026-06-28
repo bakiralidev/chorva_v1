@@ -1,0 +1,74 @@
+{% extends "sqladmin/base.html" %}
+{% block body %}
+<div class="d-flex align-items-center justify-content-center vh-100">
+  <form class="Fcol-lg-6 col-md-6 card card-md" action="{{ url_for('admin:login') }}" method="POST" autocomplete="off">
+    <div class="card-body">
+      <h2 class="card-title text-center mb-4">{{ t.login_title if t is defined else "Login" }} — {{ admin.title }}</h2>
+      <div class="mb-3">
+        <label class="form-label">{{ t.username if t is defined else "Username" }}</label>
+        {% if error %}
+        <input name="username" type="text" class="form-control is-invalid" placeholder="{{ t.username_placeholder if t is defined else 'Enter username' }}"
+          autocomplete="off">
+        <div class="invalid-feedback">{{ t.invalid_credentials if t is defined else error }}</div>
+        {% else %}
+        <input name="username" type="text" class="form-control" placeholder="{{ t.username_placeholder if t is defined else 'Enter username' }}" autocomplete="off">
+        {% endif %}
+      </div>
+      <div class="mb-2">
+        <label class="form-label">
+          {{ t.password if t is defined else "Password" }}
+        </label>
+        <div class="input-group input-group-flat">
+          {% if error %}
+          <input name="password" type="password" class="form-control is-invalid" placeholder="{{ t.password_placeholder if t is defined else 'Password' }}"
+            autocomplete="off">
+          <div class="invalid-feedback">{{ t.invalid_credentials if t is defined else error }}</div>
+          {% else %}
+          <input name="password" type="password" class="form-control" placeholder="{{ t.password_placeholder if t is defined else 'Password' }}" autocomplete="off">
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Language selector on login page -->
+      <div class="mb-3 d-flex justify-content-end">
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="loginLangDropdown"
+            data-bs-toggle="dropdown" aria-expanded="false">
+            <span id="loginLangLabel">O'zbekcha</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="loginLangDropdown">
+            <li><a class="dropdown-item" href="#" onclick="changeLoginLanguage('uz')">O'zbekcha</a></li>
+            <li><a class="dropdown-item" href="#" onclick="changeLoginLanguage('ru')">Русский</a></li>
+            <li><a class="dropdown-item" href="#" onclick="changeLoginLanguage('en')">English</a></li>
+            <li><a class="dropdown-item" href="#" onclick="changeLoginLanguage('tr')">Türkçe</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="form-footer">
+        <button type="submit" class="btn btn-primary w-100">{{ t.login_btn if t is defined else "Login" }}</button>
+      </div>
+    </div>
+  </form>
+</div>
+<script>
+function changeLoginLanguage(lang) {
+    document.cookie = "admin_lang=" + lang + "; path=/; max-age=31536000";
+    window.location.reload();
+}
+document.addEventListener("DOMContentLoaded", function() {
+    var cookies = document.cookie.split(';');
+    var currentLang = 'uz';
+    for (var i = 0; i < cookies.length; i++) {
+        var c = cookies[i].trim();
+        if (c.indexOf("admin_lang=") == 0) {
+            currentLang = c.substring("admin_lang=".length, c.length);
+            break;
+        }
+    }
+    var labels = { 'uz': "O'zbekcha", 'ru': 'Русский', 'en': 'English', 'tr': 'Türkçe' };
+    var el = document.getElementById("loginLangLabel");
+    if (el) el.textContent = labels[currentLang] || "O'zbekcha";
+});
+</script>
+{% endblock %}

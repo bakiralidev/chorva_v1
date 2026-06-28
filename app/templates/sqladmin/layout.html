@@ -1,0 +1,116 @@
+{% extends "sqladmin/base.html" %}
+{% from 'sqladmin/_macros.html' import display_menu %}
+{% block body %}
+<div class="wrapper">
+  <aside class="navbar navbar-expand-lg navbar-vertical navbar-expand-md navbar-dark" data-bs-theme="dark">
+    <div class="container-fluid">
+      <h1 class="navbar-brand navbar-brand-autodark">
+        <a href="{{ url_for('admin:index') }}">
+          {% if admin.logo_url %}
+          <img src="{{ admin.logo_url }}" width="{{ admin.logo_width }}" height="{{ admin.logo_height }}" alt="{{ admin.title }}" class="navbar-brand-logo" />
+          {% else %}
+          <h3>{{ admin.title }}</h3>
+          {% endif %}
+        </a>
+      </h1>
+      <nav class="navbar navbar-expand-sm shadow-none" id="navbar-menu">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent"
+          aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarSupportedContent">
+          {{ display_menu(admin._menu, request) }}
+        </div>
+      </nav>
+      {% if admin.authentication_backend %}
+      <a href="{{ request.url_for('admin:logout') }}" class="btn btn-secondary btn-icon m-2 px-2">
+        <span class="me-2">{{ t.logout if t is defined else "Logout" }}</span>
+        <i class="fa fa-sign-out"></i>
+      </a>
+      {% endif %}
+    </div>
+  </aside>
+  <div class="page-wrapper">
+    <div class="container-fluid">
+      <div class="page-header d-print-none">
+        {% block content_header %}
+        <div class="row align-items-center mb-3">
+          <div class="col">
+            <h2 class="page-title">{{ title }}</h2>
+            <div class="page-pretitle">{{ subtitle }}</div>
+          </div>
+
+          <!-- Language Selector Dropdown -->
+          <div class="col-auto ms-auto d-print-none">
+            <div class="dropdown">
+              <button class="btn btn-secondary dropdown-toggle shadow-sm" type="button" id="adminLanguageDropdown"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                style="border-radius: 4px; padding: 6px 12px; font-weight: 500;">
+                <i class="fa fa-language me-1"></i>
+                {{ t.language if t is defined else "Til" }}:
+                <span id="currentAdminLangLabel">
+                  {% if admin_lang_code is defined %}
+                    {% if admin_lang_code == 'uz' %}O'zbekcha
+                    {% elif admin_lang_code == 'ru' %}Русский
+                    {% elif admin_lang_code == 'en' %}English
+                    {% elif admin_lang_code == 'tr' %}Türkçe
+                    {% else %}O'zbekcha{% endif %}
+                  {% else %}O'zbekcha{% endif %}
+                </span>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="adminLanguageDropdown"
+                style="border-radius: 6px; border: 1px solid #e6ebf1;">
+                <li>
+                  <a class="dropdown-item py-2 {% if admin_lang_code is defined and admin_lang_code == 'uz' %}active{% endif %}"
+                    href="#" onclick="changeAdminLanguage('uz')">
+                    🇺🇿 O'zbekcha
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item py-2 {% if admin_lang_code is defined and admin_lang_code == 'ru' %}active{% endif %}"
+                    href="#" onclick="changeAdminLanguage('ru')">
+                    🇷🇺 Русский
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item py-2 {% if admin_lang_code is defined and admin_lang_code == 'en' %}active{% endif %}"
+                    href="#" onclick="changeAdminLanguage('en')">
+                    🇬🇧 English
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item py-2 {% if admin_lang_code is defined and admin_lang_code == 'tr' %}active{% endif %}"
+                    href="#" onclick="changeAdminLanguage('tr')">
+                    🇹🇷 Türkçe
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <script>
+        function changeAdminLanguage(lang) {
+            document.cookie = "admin_lang=" + lang + "; path=/; max-age=31536000";
+            window.location.reload();
+        }
+        </script>
+        {% endblock %}
+      </div>
+    </div>
+    <div class="page-body flex-grow-1">
+      <div class="container-fluid">
+        <div class="row row-deck row-cards">
+          {% block content %} {% endblock %}
+          {% block flash %}
+          {% include 'sqladmin/flash.html' %}
+          {% endblock %}
+          {% block secret_modal %}
+          {% include 'sqladmin/secret_modal.html' %}
+          {% endblock %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

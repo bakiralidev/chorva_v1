@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from jose import jwt
 import bcrypt
+import secrets
 from app.config import settings
 
 ALGORITHM = "HS256"
@@ -36,3 +37,9 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+def generate_refresh_token() -> str:
+    """
+    Generate cryptographically secure refresh token string.
+    """
+    return secrets.token_urlsafe(64)
