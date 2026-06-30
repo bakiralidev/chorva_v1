@@ -20,6 +20,7 @@ class User(Base):
 
     # Relationships
     advertisements: Mapped[list["Advertisement"]] = relationship("Advertisement", back_populates="user", cascade="all, delete-orphan")
+    favorites: Mapped[list["Favorite"]] = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
 
     def __str__(self) -> str:
         return self.email or self.phone_number or str(self.id)

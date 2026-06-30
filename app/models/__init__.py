@@ -5,6 +5,7 @@ from app.models.region import Region
 from app.models.advertisement import Advertisement, AdStatus
 from app.models.image import Image
 from app.models.refresh_token import RefreshToken
+from app.models.favorite import Favorite
 
 __all__ = [
     "Base",
@@ -14,5 +15,6 @@ __all__ = [
     "Advertisement",
     "AdStatus",
     "Image",
-    "RefreshToken"
+    "RefreshToken",
+    "Favorite"
 ]

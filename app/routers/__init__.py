@@ -3,12 +3,12 @@ from app.routers.front.auth import router as front_auth_router
 from app.routers.front.directories import router as front_directories_router
 from app.routers.front.ads import router as front_ads_router
 from app.routers.front.offers import router as front_offers_router
-
+from app.routers.front.favorites import router as front_favorites_router
 from app.routers.mobile.auth import router as mobile_auth_router
 from app.routers.mobile.directories import router as mobile_directories_router
 from app.routers.mobile.ads import router as mobile_ads_router
 from app.routers.mobile.offers import router as mobile_offers_router
-
+from app.routers.mobile.favorites import router as mobile_favorites_router
 from app.routers.admin import router as admin_router
 
 # Vebsayt uchun ochiq API sub-ilovasi
@@ -46,11 +46,13 @@ front_app.include_router(front_auth_router)
 front_app.include_router(front_directories_router)
 front_app.include_router(front_ads_router)
 front_app.include_router(front_offers_router)
+front_app.include_router(front_favorites_router)
 
 mobile_app.include_router(mobile_auth_router)
 mobile_app.include_router(mobile_directories_router)
 mobile_app.include_router(mobile_ads_router)
 mobile_app.include_router(mobile_offers_router)
+mobile_app.include_router(mobile_favorites_router)
 
 admin_app.include_router(admin_router)
 
