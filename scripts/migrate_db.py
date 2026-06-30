@@ -1,5 +1,9 @@
 import asyncio
 import sqlite3
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import engine, Base
 from app.models.offer import Offer, OfferTranslation
@@ -8,7 +12,6 @@ from app.models.user import User
 from app.models.refresh_token import RefreshToken
 
 async def migrate():
-    # 1. Add columns to users table
     try:
         conn = sqlite3.connect("chorva.db")
         cursor = conn.cursor()
@@ -16,22 +19,22 @@ async def migrate():
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 0")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass 
             
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN accepted_offer BOOLEAN DEFAULT 0")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass 
             
         try:
             cursor.execute("ALTER TABLE offers ADD COLUMN has_file BOOLEAN DEFAULT 0")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass 
 
         try:
             cursor.execute("ALTER TABLE offers ADD COLUMN file_url VARCHAR(255)")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass 
             
         conn.commit()
         conn.close()
@@ -39,7 +42,6 @@ async def migrate():
     except Exception as e:
         print(f"Error updating tables: {e}")
 
-    # 2. Create new tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         print("New tables (offers, verification_codes) checked/created successfully.")

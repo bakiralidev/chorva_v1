@@ -1,13 +1,12 @@
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Livestock Trading Platform MVP"
-    SECRET_KEY: str = "super-secret-key-change-me"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    PROJECT_NAME: str
+    SECRET_KEY: str
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    DATABASE_URL: str = "sqlite+aiosqlite:///./chorva.db"
+    DATABASE_URL: str
 
-    model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 settings = Settings()

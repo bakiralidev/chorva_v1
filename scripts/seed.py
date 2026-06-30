@@ -1,4 +1,8 @@
 import asyncio
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import engine, Base, async_session_local
@@ -8,13 +12,11 @@ from app.models.user import User
 from app.auth.security import hash_password
 
 async def seed_data():
-    # Ma'lumotlar bazasi jadvallarini yaratish (ayniqsa SQLite uchun juda foydali)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         print("Barcha jadvallar yaratildi yoki tekshirildi.")
 
     async with async_session_local() as session:
-        # 1. Kategoriyalarni yuklash
         categories_data = [
             {
                 "icon_url": "https://img.icons8.com/color/96/cow.png",
@@ -74,7 +76,6 @@ async def seed_data():
 
         for cat in categories_data:
             uz_translation = [t for t in cat["translations"] if t["language"] == "uz"][0]
-            # Check if category with this uz slug already exists
             q = select(Category).join(Category.translations).where(
                 CategoryTranslation.language == "uz",
                 CategoryTranslation.slug == uz_translation["slug"]
@@ -94,7 +95,6 @@ async def seed_data():
                     session.add(db_t)
                 print(f"Kategoriya qo'shildi: {uz_translation['name']}")
 
-        # 2. Hududlarni (viloyatlarni) yuklash
         regions_data = [
             {
                 "translations": [
@@ -212,7 +212,6 @@ async def seed_data():
 
         for reg in regions_data:
             uz_translation = [t for t in reg["translations"] if t["language"] == "uz"][0]
-            # Check if region with this uz name already exists
             q = select(Region).join(Region.translations).where(
                 RegionTranslation.language == "uz",
                 RegionTranslation.name == uz_translation["name"]
@@ -231,7 +230,6 @@ async def seed_data():
                     session.add(db_t)
                 print(f"Hudud qo'shildi: {uz_translation['name']}")
 
-        # 3. Superuser (Admin) yaratish
         admin_email = "admin@chorva.uz"
         admin_phone = "+998901234567"
         admin_pass = "admin123"
