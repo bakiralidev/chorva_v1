@@ -23,9 +23,14 @@ ENV/
 .DS_Store
 Thumbs.db
 *.log
+*.txt
+*.md
 
 # Media / Uploaded files
 uploads/
 
 # Testing cache
 .pytest_cache/
+
+#logs
+logs/

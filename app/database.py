@@ -2,15 +2,27 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
-# Determine if we are using SQLite and apply thread options if so
+def normalize_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("sqlite:///"):
+        return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    return url
+
+
+DATABASE_URL = normalize_database_url(settings.DATABASE_URL)
+
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
 # Create async database engine
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    DATABASE_URL,
     connect_args=connect_args,
+    pool_pre_ping=True,
     echo=False
 )
 

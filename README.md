@@ -4,7 +4,7 @@ FastAPI yordamida chorva mollari oldi-sotdisi uchun mo'ljallangan onlayn savdo p
 
 ## Texnologiyalar tarkibi
 * **Framework:** [FastAPI](https://fastapi.tiangolo.com/)
-* **Ma'lumotlar bazasi:** PostgreSQL (yoki SQLite local sinovlar uchun)
+* **Ma'lumotlar bazasi:** PostgreSQL
 * **ORM:** SQLAlchemy (Async)
 * **Avtorizatsiya:** JWT (Access Token 30 daqiqa) & Kriptografik xavfsiz Refresh Token (7 kun) + Token Rotation & Logout
 * **Admin Panel:** SQLAdmin
@@ -25,8 +25,8 @@ chorva/
 │   └── routers/           # API Endpointlar (auth, ads, directories, offers)
 ├── docker-compose.yml     # PostgreSQL uchun Docker sozlamalari
 ├── requirements.txt       # Loyiha kutubxonalari
-├── migrate_db.py          # Ma'lumotlar bazasini migratsiya qilish va ustunlarni yangilash skripti
-├── seed.py                # Jadvallar yaratish va boshlang'ich ma'lumotlar yuklash
+├── scripts/migrate_db.py  # Ma'lumotlar bazasini migratsiya qilish va ustunlarni yangilash skripti
+├── scripts/seed.py        # Jadvallar yaratish va boshlang'ich ma'lumotlar yuklash
 ├── test_api.py            # Front API-ni sinovdan o'tkazish uchun integratsion test
 ├── test_mobile_api.py     # Mobile API-ni sinovdan o'tkazish uchun integratsion test
 ├── test_refresh_token.py  # Access/Refresh Token aylanishi va Logoutni tekshirish testi
@@ -45,21 +45,20 @@ pip install -r requirements.txt
 ```
 
 ### 2. Ma'lumotlar bazasini sozlash va migratsiya:
-Mahalliy sozlamalar uchun `.env` faylidan foydalaniladi. Standart holatda SQLite bazasi ishlatiladi.
-Jadvallarni yaratish va eng oxirgi o'zgarishlar (ustunlar) bazada aks etishi uchun quyidagi buyruqni ishga tushiring:
+Mahalliy sozlamalar uchun `.env` faylidan foydalaniladi. Standart holatda PostgreSQL bazasi ishlatiladi.
+Avval PostgreSQL konteynerini ishga tushiring:
 ```bash
-python migrate_db.py
+docker-compose up -d
 ```
 
-Agar PostgreSQL ishlatmoqchi bo'lsangiz:
+Keyin jadvallarni yaratish va eng oxirgi o'zgarishlar (ustunlar) bazada aks etishi uchun quyidagi buyruqni ishga tushiring:
 ```bash
-docker-compose up -d       # Docker orqali Postgres-ni yoqish
+python scripts/migrate_db.py
 ```
-Va `.env` faylida ulanish manzilini PostgreSQL ga o'zgartiring.
 
 ### 3. Boshlang'ich ma'lumotlarni yuklash (Seed):
 ```bash
-python seed.py
+python scripts/seed.py
 ```
 *Tizimda avtomatik tarzda quyidagi admin profili yaratiladi:*
 * **Email:** `admin@chorva.uz`
@@ -70,6 +69,8 @@ python seed.py
 ```bash
 python run.py
 ```
+
+Runtime loglar `logs/app.log` fayliga, xatoliklar esa `logs/error.log` fayliga yoziladi.
 
 * **Veb-sayt API Hujjatlari (Swagger):** [http://127.0.0.1:8000/front-docs](http://127.0.0.1:8000/front-docs) (Redoc: `/front-redoc`)
 * **Mobil Ilova API Hujjatlari (Swagger):** [http://127.0.0.1:8000/mobile-docs](http://127.0.0.1:8000/mobile-docs) (Redoc: `/mobile-redoc`)

@@ -1,4 +1,7 @@
 import os
+import logging
+import time
+import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +15,12 @@ from fastapi.responses import RedirectResponse
 from app.routers import front_app, mobile_app, admin_app
 from app.utils.lang import admin_lang
 from app.utils.admin_i18n import get_admin_t
+from app.logging_config import setup_logging
+
+setup_logging()
+
+logger = logging.getLogger("app")
+request_logger = logging.getLogger("app.requests")
 
 class AdminLangMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -25,6 +34,54 @@ class AdminLangMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             admin_lang.reset(token)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, log_responses: bool = True):
+        super().__init__(app)
+        self.log_responses = log_responses
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = getattr(request.state, "request_id", None)
+        if not request_id:
+            request_id = request.headers.get("x-request-id", uuid.uuid4().hex)
+            request.state.request_id = request_id
+
+        started_at = time.perf_counter()
+        client_host = request.client.host if request.client else "-"
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "Unhandled request error request_id=%s method=%s path=%s client=%s duration_ms=%.2f",
+                request_id,
+                request.method,
+                request.url.path,
+                client_host,
+                duration_ms,
+            )
+            raise
+
+        if not self.log_responses:
+            return response
+
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        log_method = request_logger.warning if response.status_code >= 400 else request_logger.info
+        log_method(
+            "request_id=%s method=%s path=%s status_code=%s duration_ms=%.2f client=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            client_host,
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 from app.admin import (
     admin_auth_backend, 
     UserAdmin, 
@@ -59,6 +116,20 @@ app.add_middleware(
 )
 
 app.add_middleware(AdminLangMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+front_app.add_middleware(RequestLoggingMiddleware, log_responses=False)
+mobile_app.add_middleware(RequestLoggingMiddleware, log_responses=False)
+admin_app.add_middleware(RequestLoggingMiddleware, log_responses=False)
+
+
+@app.on_event("startup")
+async def log_startup() -> None:
+    logger.info("Application startup: %s", settings.PROJECT_NAME)
+
+
+@app.on_event("shutdown")
+async def log_shutdown() -> None:
+    logger.info("Application shutdown: %s", settings.PROJECT_NAME)
 
 # Rasmlarni yuklash va ularga havola qilish uchun static papkani ulaymiz
 os.makedirs("uploads", exist_ok=True)

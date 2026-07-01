@@ -382,12 +382,21 @@ class AdvertisementAdmin(ModelView, model=Advertisement):
         ]
 
     form_columns = [
-        "user_id", "category_id", "region_id",
+        "user", "category", "region",
         "title", "description", "price",
         "is_negotiable", "age", "weight",
         "color", "quantity", "contact_phone",
         "status", "is_top"
     ]
+
+    async def on_model_change(self, data: dict, model: Advertisement, is_created: bool, request: Request) -> None:
+        missing_fields = [
+            field_name
+            for field_name in ("user", "category", "region")
+            if not data.get(field_name) and not getattr(model, field_name, None)
+        ]
+        if missing_fields:
+            raise ValueError("E'lon uchun foydalanuvchi, kategoriya va hudud majburiy.")
 
 class ImageAdmin(ModelView, model=Image):
     column_list = ["id", "advertisement_id", "image_url", "is_main"]

@@ -6,6 +6,8 @@ from app.models.advertisement import Advertisement, AdStatus
 from app.models.image import Image
 from app.models.refresh_token import RefreshToken
 from app.models.favorite import Favorite
+from app.models.offer import Offer, OfferTranslation
+from app.models.verification import VerificationCode
 
 __all__ = [
     "Base",
@@ -16,5 +18,8 @@ __all__ = [
     "AdStatus",
     "Image",
     "RefreshToken",
-    "Favorite"
+    "Favorite",
+    "Offer",
+    "OfferTranslation",
+    "VerificationCode",
 ]
