@@ -7,7 +7,8 @@ from sqlalchemy import or_, and_
 import uuid
 import os
 import shutil
-from wtforms import FileField
+from typing import Any
+from wtforms import BooleanField, FileField, Form, PasswordField, StringField, TextAreaField
 from markupsafe import Markup
 
 from app.config import settings
@@ -19,7 +20,7 @@ from app.models.advertisement import Advertisement
 from app.models.image import Image
 from app.models.offer import Offer
 from app.models.verification import VerificationCode
-from app.auth.security import verify_password
+from app.auth.security import hash_password, verify_password
 from app.utils.lang import admin_lang
 from app.utils.admin_i18n import get_admin_t
 
@@ -92,11 +93,22 @@ class AdminAuth(AuthenticationBackend):
 admin_auth_backend = AdminAuth(secret_key=settings.SECRET_KEY)
 
 # SQLAdmin uchun modellar ko'rinishi (Model Views)
+class UserForm(Form):
+    email = StringField("Email")
+    phone_number = StringField("Telefon raqam")
+    password = PasswordField("Parol")
+    is_active = BooleanField("Faol")
+    is_verified = BooleanField("Tasdiqlangan")
+    accepted_offer = BooleanField("Ofertaga rozi")
+    is_superuser = BooleanField("Superuser")
+    preferred_lang = StringField("Afzal til")
+
+
 class UserAdmin(ModelView, model=User):
-    column_list = ["id", "email", "phone_number", "is_active", "accepted_offer", "is_superuser", "created_at"]
+    column_list = ["id", "email", "phone_number", "is_active", "is_verified", "accepted_offer", "is_superuser", "created_at"]
     column_searchable_list = ["email", "phone_number"]
     column_sortable_list = ["created_at"]
-    form_columns = ["email", "phone_number", "is_active", "accepted_offer", "is_superuser"]
+    form = UserForm
 
     @property
     def name(self) -> str:
@@ -114,6 +126,7 @@ class UserAdmin(ModelView, model=User):
             "email": t["col_email"],
             "phone_number": t["col_phone"],
             "is_active": t["col_is_active"],
+            "is_verified": "Tasdiqlangan",
             "accepted_offer": t["col_accepted_offer"],
             "is_superuser": t["col_is_superuser"],
             "created_at": t["col_created_at"],
@@ -132,7 +145,30 @@ class UserAdmin(ModelView, model=User):
             BooleanFilter(column=User.is_superuser, title=t["col_is_superuser"]),
         ]
 
-from wtforms import Form, StringField, TextAreaField, BooleanField
+    def _prepare_user_data(self, data: dict, is_created: bool) -> None:
+        data["email"] = data.get("email") or None
+        data["phone_number"] = data.get("phone_number") or None
+        data["preferred_lang"] = data.get("preferred_lang") or None
+
+        if not data["email"] and not data["phone_number"]:
+            raise ValueError("Foydalanuvchi uchun email yoki telefon raqamidan kamida bittasi majburiy.")
+
+        password = data.pop("password", None)
+        if password:
+            data["hashed_password"] = hash_password(password)
+        elif is_created and not data.get("hashed_password"):
+            raise ValueError("Yangi foydalanuvchi yaratish uchun parol majburiy.")
+
+    async def insert_model(self, request: Request, data: dict) -> Any:
+        self._prepare_user_data(data, is_created=True)
+        return await super().insert_model(request, data)
+
+    async def update_model(self, request: Request, pk: str, data: dict) -> Any:
+        self._prepare_user_data(data, is_created=False)
+        return await super().update_model(request, pk, data)
+
+    async def on_model_change(self, data: dict, model: User, is_created: bool, request: Request) -> None:
+        self._prepare_user_data(data, is_created=is_created)
 
 class OfferForm(Form):
     has_file = BooleanField("Fayl biriktirish (Tanlansa, sarlavha va matnlar majburiy emas)")
