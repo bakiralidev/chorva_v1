@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -242,8 +243,9 @@ async def create_advertisement(
 
     # Rasmlarni bog'lash
     if ad_in.images:
-        has_main = any(img.is_main for img in ad_in.images)
-        for idx, img_in in enumerate(ad_in.images):
+        valid_images = [img for img in ad_in.images if img.image_url]
+        has_main = any(img.is_main for img in valid_images)
+        for idx, img_in in enumerate(valid_images):
             # Agar birorta ham rasm main deb belgilanmagan bo'lsa, birinchisini main qilamiz
             is_main = img_in.is_main
             if not has_main and idx == 0:
@@ -338,8 +340,9 @@ async def update_advertisement(
         from sqlalchemy import delete
         await db.execute(delete(Image).where(Image.advertisement_id == ad.id))
         
-        has_main = any(img.is_main for img in ad_update.images)
-        for idx, img_in in enumerate(ad_update.images):
+        valid_images = [img for img in ad_update.images if img.image_url]
+        has_main = any(img.is_main for img in valid_images)
+        for idx, img_in in enumerate(valid_images):
             is_main = img_in.is_main
             if not has_main and idx == 0:
                 is_main = True
@@ -350,7 +353,7 @@ async def update_advertisement(
             )
             db.add(new_image)
 
-    db.add(ad)
+    ad.updated_at = datetime.utcnow()
     await db.commit()
     
     result_query = select(Advertisement).options(

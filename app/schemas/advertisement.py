@@ -7,7 +7,7 @@ from app.schemas.category import CategoryResponse
 from app.schemas.region import RegionResponse
 
 class AdImageCreate(BaseModel):
-    image_url: str
+    image_url: str | None = None
     is_main: bool = False
 
 class AdImageResponse(BaseModel):
