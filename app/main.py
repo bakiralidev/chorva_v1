@@ -94,8 +94,12 @@ from app.admin import (
 )
 
 # SQLAdmin and WTForms 3.2+ compatibility monkey patch
-from sqladmin.widgets import BooleanInputWidget
-BooleanInputWidget.validation_attrs = ["required", "disabled"]
+try:
+    from sqladmin.widgets import BooleanInputWidget
+    BooleanInputWidget.validation_attrs = ["required", "disabled"]
+except ImportError:
+    # SQLAdmin v0.20+ or newer does not require or have this widget
+    pass
 
 # FastAPI application initialization
 app = FastAPI(

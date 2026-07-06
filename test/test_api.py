@@ -88,26 +88,26 @@ def run_tests():
 
         # 4. Test Create Ad (POST /api/v1/front/ads)
         print("\n4. /api/v1/front/ads (POST) test qilinmoqda...")
+        import io
         ad_data = {
             "title": "Simmental sigir, sog'lom",
             "description": "Juda yaxshi holatdagi zotdor sigir. 3 yoshli, sut berishi a'lo darajada.",
-            "price": 12000000.0,
-            "is_negotiable": True,
+            "price": "12000000.0",
+            "is_negotiable": "true",
             "age": "3 yosh",
             "weight": "450 kg",
             "color": "Qizil-ola",
-            "quantity": 1,
+            "quantity": "1",
             "contact_phone": "+998901112233",
-            "category_id": category_id,
-            "region_id": region_id,
-            "images": [
-                {"image_url": "https://example.com/sigir1.jpg", "is_main": True},
-                {"image_url": "https://example.com/sigir2.jpg", "is_main": False},
-                {"is_main": False}  # Missing image_url - should be ignored by the backend
-            ]
+            "category_id": str(category_id),
+            "region_id": str(region_id)
         }
+        files = [
+            ("images", ("sigir1.jpg", io.BytesIO(b"fake_image_bytes_1"), "image/jpeg")),
+            ("images", ("sigir2.jpg", io.BytesIO(b"fake_image_bytes_2"), "image/jpeg"))
+        ]
         
-        ad_create_response = client.post("/api/v1/front/ads/", json=ad_data, headers=headers)
+        ad_create_response = client.post("/api/v1/front/ads/", data=ad_data, files=files, headers=headers)
         assert ad_create_response.status_code == 201, f"E'lon qo'shishda xatolik: {ad_create_response.text}"
         ad_created = ad_create_response.json()
         ad_id = ad_created["id"]

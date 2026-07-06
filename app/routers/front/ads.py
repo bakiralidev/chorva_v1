@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -182,28 +182,128 @@ async def get_advertisement_detail(
 
 @router.post("/", response_model=AdvertisementResponse, status_code=status.HTTP_201_CREATED)
 async def create_advertisement(
-    ad_in: AdvertisementCreate,
+    title: str = Form(..., min_length=3, max_length=255, description="E'lon sarlavhasi (Masalan: 'Sotiladigan sog'lom sigir')"),
+    description: str = Form(..., min_length=10, description="E'lon tavsifi (Chorva haqida batafsil ma'lumot)"),
+    price: float | None = Form(None, description="Narxi so'mda (Kelishiladigan bo'lsa yubormaslik mumkin)"),
+    is_negotiable: bool = Form(False, description="Narxi kelishiladigan bo'lsa 'true', aks holda 'false'"),
+    age: str | None = Form(None, description="Yoshi (Masalan: '2 yosh', '1 yosh-u 3 oylik')"),
+    weight: str | None = Form(None, description="Vazni (Masalan: '350 kg')"),
+    color: str | None = Form(None, description="Rangi (Masalan: 'Qora', 'Qizil-ola')"),
+    quantity: int = Form(1, ge=1, description="Sotiladigan chorva soni"),
+    contact_phone: str = Form(..., min_length=7, max_length=50, description="Aloqa telefon raqami"),
+    category_id: int = Form(..., description="Tizimdan olingan kategoriya ID raqami"),
+    region_id: int = Form(..., description="Tizimdan olingan hudud/viloyat ID raqami"),
+    images: list[UploadFile] = File(None, description="E'lon rasmlari fayllari (Maksimal 5 tagacha rasm jo'natish mumkin)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    ### Yangi e'lon qo'shish.
+    ### Yangi e'lon joylashtirish (Fayl yuklash bilan birga).
     
-    Tizimga kirgan foydalanuvchilar tomonidan yangi e'lonlar qo'shish uchun ishlatiladi.
+    Ushbu endpoint veb-sayt foydalanuvchilari uchun rasm fayllari bilan birgalikda yangi e'lon joylashtirish uchun mo'ljallangan. 
+    So'rov formatini **`multipart/form-data`** ko'rinishida yuborish lozim.
     
-    * E'lon yaratilganda uning holati avtomatik ravishda `active` deb belgilanadi va top-elonligi `is_top = False` bo'ladi.
-    * E'longa bir nechta rasmlar bog'lanishi mumkin. Agar rasmlar ichidan hech biri `is_main = True` (asosiy rasm) qilinmagan bo'lsa, birinchi yuborilgan rasm avtomatik asosiy rasm qilib olinadi.
+    ---
+    ### 📌 Muhim Qoidalar va Ishlash Mantiqi:
+    1. **Rasm fayllari yuklash:**
+       * `images` maydonida 1 tadan 5 tagacha haqiqiy rasm faylini yuborishingiz mumkin.
+       * Birinchi yuborilgan rasm avtomatik ravishda e'lonning **asosiy (bosh) rasmi** (`is_main = True`) qilib belgilanadi.
+       * Yuklangan barcha rasmlar serverning `uploads/ad_pics` papkasiga saqlanadi va unikal nomga ega bo'ladi.
+    2. **Avtorizatsiya:**
+       * Ushbu API faqat ro'yxatdan o'tgan va tizimga kirgan foydalanuvchilar uchun ochiq.
+       * `Authorization: Bearer <access_token>` sarlavhasini yuborish shart.
+    3. **Validatsiyalar:**
+       * `category_id` va `region_id` tizimda mavjud bo'shigi shart (avval tegishli ma'lumotnomalardan yuklab oling).
+       * Sarlavha kamida 3 ta belgi, tavsif esa kamida 10 ta belgidan iborat bo'lishi lozim.
+       
+    ---
+    ### 💻 Frontendchilar uchun Qo'llanish Qo'llanmasi (Spoon-Feed Examples):
     
-    **So'rov sarlavhalari (Request Headers):**
-    * `Authorization: Bearer <access_token>` (Majburiy)
+    #### 1️⃣ JavaScript (`axios` yordamida `FormData` jo'natish):
+    ```javascript
+    // 1. FormData ob'ektini yaratamiz
+    const formData = new FormData();
     
-    **Muayyan Xatoliklar (Error States):**
-    * **401 Unauthorized**: JWT token yuborilmagan yoki noto'g'ri bo'lsa.
-    * **400 Bad Request**: 
-      * Agar yuborilgan `category_id` yoki `region_id` tizimda mavjud bo'lmasa.
+    // 2. Oddiy matnli maydonlarni qo'shamiz
+    formData.append('title', 'Sotiladigan baquvvat zotdor buqa');
+    formData.append('description', '2 yoshli, juda baquvvat va sog\'lom buqa sotiladi. Emlashlari qilingan.');
+    formData.append('price', 12500000);
+    formData.append('is_negotiable', true);
+    formData.append('age', '2 yosh');
+    formData.append('weight', '450 kg');
+    formData.append('color', 'Qora-ola');
+    formData.append('quantity', 1);
+    formData.append('contact_phone', '+998901234567');
+    formData.append('category_id', 1); // Kategoriya ID
+    formData.append('region_id', 1);   // Viloyat ID
+    
+    // 3. Foydalanuvchi tanlagan rasmlarni qo'shamiz (masalan, HTML inputdan olingan fileList)
+    const files = document.querySelector('input[type="file"]').files;
+    for (let i = 0; i < files.length; i++) {
+        formData.append('images', files[i]); // Har bir faylni ketma-ket bir xil 'images' kaliti ostida qo'shamiz
+    }
+    
+    // 4. API ga so'rov yuboramiz
+    axios.post('http://127.0.0.1:8000/api/v1/front/ads/', formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data', // Axios buni avtomatik o'rnatadi, lekin qo'lda yozish ham mumkin
+            'Authorization': `Bearer ${yourAccessToken}`
+        }
+    })
+    .then(response => {
+        console.log('E\'lon muvaffaqiyatli yaratildi:', response.data);
+    })
+    .catch(error => {
+        console.error('Xatolik:', error.response.data);
+    });
+    ```
+    
+    #### 2️⃣ JavaScript (`Fetch API` yordamida):
+    ```javascript
+    const formData = new FormData();
+    // (maydonlarni append qilish yuqoridagidek)
+    
+    fetch('http://127.0.0.1:8000/api/v1/front/ads/', {
+        method: 'POST',
+        headers: {
+            // DIQQAT: Fetch API da Content-Type ni yozmang! Brauzer uning chegarasini (boundary) o'zi aniqlab yozadi.
+            'Authorization': `Bearer ${yourAccessToken}`
+        },
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => console.log(data));
+    ```
+
+    #### 3️⃣ `curl` orqali sinov so'rovi:
+    ```bash
+    curl -X POST "http://127.0.0.1:8000/api/v1/front/ads/" \
+      -H "Authorization: Bearer ACCESS_TOKEN_SHU_YERDA" \
+      -H "Content-Type: multipart/form-data" \
+      -F "title=Simmental sigir" \
+      -F "description=Sog'lom zotdor sigir sotiladi" \
+      -F "price=12000000" \
+      -F "is_negotiable=true" \
+      -F "age=3 yosh" \
+      -F "weight=400 kg" \
+      -F "color=Qizil-ola" \
+      -F "quantity=1" \
+      -F "contact_phone=+998901112233" \
+      -F "category_id=1" \
+      -F "region_id=1" \
+      -F "images=@/path/to/image1.jpg" \
+      -F "images=@/path/to/image2.jpg"
+    ```
+    
+    ---
+    ### ⚠️ Xatolik Holatlari (Error Responses):
+    * **401 Unauthorized:** JWT Token yuborilmagan, eskirgan yoki xato.
+    * **400 Bad Request (Kategoriya topilmaganda):** `{"detail": "Kiritilgan kategoriya mavjud emas."}`
+    * **400 Bad Request (Viloyat topilmaganda):** `{"detail": "Kiritilgan hudud/viloyat mavjud emas."}`
+    * **422 Unprocessable Entity:** Majburiy maydonlar to'ldirilmagan yoki validatsiya xatosi (masalan, title < 3 ta belgi).
     """
     # Kategoriya borligini tekshirish
-    category_query = select(Category).where(Category.id == ad_in.category_id)
+    category_query = select(Category).where(Category.id == category_id)
     category_res = await db.execute(category_query)
     if not category_res.scalar_one_or_none():
         raise HTTPException(
@@ -212,7 +312,7 @@ async def create_advertisement(
         )
 
     # Hudud borligini tekshirish
-    region_query = select(Region).where(Region.id == ad_in.region_id)
+    region_query = select(Region).where(Region.id == region_id)
     region_res = await db.execute(region_query)
     if not region_res.scalar_one_or_none():
         raise HTTPException(
@@ -223,17 +323,17 @@ async def create_advertisement(
     # Reklamani yaratish
     new_ad = Advertisement(
         user_id=current_user.id,
-        category_id=ad_in.category_id,
-        region_id=ad_in.region_id,
-        title=ad_in.title,
-        description=ad_in.description,
-        price=ad_in.price,
-        is_negotiable=ad_in.is_negotiable,
-        age=ad_in.age,
-        weight=ad_in.weight,
-        color=ad_in.color,
-        quantity=ad_in.quantity,
-        contact_phone=ad_in.contact_phone,
+        category_id=category_id,
+        region_id=region_id,
+        title=title,
+        description=description,
+        price=price,
+        is_negotiable=is_negotiable,
+        age=age,
+        weight=weight,
+        color=color,
+        quantity=quantity,
+        contact_phone=contact_phone,
         status=AdStatus.active,
         views_count=0,
         is_top=False
@@ -241,19 +341,30 @@ async def create_advertisement(
     db.add(new_ad)
     await db.flush()  # ID sini olish uchun flush
 
-    # Rasmlarni bog'lash
-    if ad_in.images:
-        valid_images = [img for img in ad_in.images if img.image_url]
-        has_main = any(img.is_main for img in valid_images)
-        for idx, img_in in enumerate(valid_images):
-            # Agar birorta ham rasm main deb belgilanmagan bo'lsa, birinchisini main qilamiz
-            is_main = img_in.is_main
-            if not has_main and idx == 0:
-                is_main = True
+    # Rasmlarni yuklash va bazaga bog'lash
+    if images:
+        import os
+        upload_dir = os.path.join("uploads", "ad_pics")
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        valid_images = [img for img in images if img.filename]
+        for idx, img in enumerate(valid_images):
+            # Unikal nom beramiz va diskka saqlaymiz
+            file_ext = os.path.splitext(img.filename)[1]
+            unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+            file_path = os.path.join(upload_dir, unique_filename)
+            
+            # Faylni diskka yozish
+            content = await img.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            
+            # Birinchi yuborilgan rasmni avtomatik ravishda asosiy (is_main = True) qilamiz
+            is_main = (idx == 0)
             
             new_image = Image(
                 advertisement_id=new_ad.id,
-                image_url=img_in.image_url,
+                image_url=f"/uploads/ad_pics/{unique_filename}",
                 is_main=is_main
             )
             db.add(new_image)
