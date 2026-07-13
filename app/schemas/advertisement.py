@@ -25,6 +25,7 @@ class AdvertisementBase(BaseModel):
     age: str | None = None
     weight: str | None = None
     color: str | None = None
+    gender: str | None = None
     quantity: int = Field(default=1, ge=1)
     contact_phone: str = Field(..., min_length=7, max_length=50)
 
@@ -69,6 +70,7 @@ class AdvertisementUpdate(BaseModel):
     age: str | None = None
     weight: str | None = None
     color: str | None = None
+    gender: str | None = None
     quantity: int | None = Field(default=None, ge=1)
     contact_phone: str | None = Field(default=None, min_length=7, max_length=50)
     category_id: int | None = None

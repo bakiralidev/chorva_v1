@@ -7,7 +7,7 @@ from sqlalchemy import or_
 from app.database import get_db
 from app.models.user import User
 from app.models.verification import VerificationCode
-from app.schemas.user import UserCreate, UserResponse, UserRegisterResponse, VerifyCode
+from app.schemas.user import UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate
 from app.schemas.token import Token, TokenRefreshRequest
 from app.auth.security import hash_password, verify_password, create_access_token, generate_refresh_token
 from app.auth.dependencies import get_current_user
@@ -236,6 +236,46 @@ async def get_my_profile(current_user: User = Depends(get_current_user)):
     **Muayyan Xatoliklar (Error States):**
     * **401 Unauthorized**: Token yuborilmagan, eskirgan yoki noto'g'ri bo'lsa.
     """
+    return current_user
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_my_profile(
+    profile_update: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    ### Foydalanuvchining shaxsiy ma'lumotlarini (email, telefon, telegram_username) tahrirlash.
+    """
+    if profile_update.email is not None and profile_update.email != current_user.email:
+        # Check if email is already taken
+        query = select(User).where(User.email == profile_update.email)
+        res = await db.execute(query)
+        if res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ushbu email allaqachon ro'yxatdan o'tgan."
+            )
+        current_user.email = profile_update.email
+
+    if profile_update.phone_number is not None and profile_update.phone_number != current_user.phone_number:
+        # Check if phone number is already taken
+        query = select(User).where(User.phone_number == profile_update.phone_number)
+        res = await db.execute(query)
+        if res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ushbu telefon raqami allaqachon ro'yxatdan o'tgan."
+            )
+        current_user.phone_number = profile_update.phone_number
+
+    if profile_update.telegram_username is not None:
+        current_user.telegram_username = profile_update.telegram_username
+
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
     return current_user
 
 

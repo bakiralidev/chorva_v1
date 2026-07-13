@@ -17,6 +17,7 @@ class User(Base):
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     preferred_lang: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Relationships
     advertisements: Mapped[list["Advertisement"]] = relationship("Advertisement", back_populates="user", cascade="all, delete-orphan")

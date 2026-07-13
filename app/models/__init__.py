@@ -8,6 +8,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.favorite import Favorite
 from app.models.offer import Offer, OfferTranslation
 from app.models.verification import VerificationCode
+from app.models.slider import Slider
 
 __all__ = [
     "Base",
@@ -22,4 +23,6 @@ __all__ = [
     "Offer",
     "OfferTranslation",
     "VerificationCode",
+    "Slider",
 ]
+

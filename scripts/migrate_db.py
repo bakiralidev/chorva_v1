@@ -15,6 +15,7 @@ MISSING_COLUMNS = {
         Column("is_verified", Boolean(), nullable=False, server_default=false()),
         Column("accepted_offer", Boolean(), nullable=False, server_default=false()),
         Column("preferred_lang", String(10), nullable=True),
+        Column("telegram_username", String(100), nullable=True),
     ],
     "offers": [
         Column("has_file", Boolean(), nullable=False, server_default=false()),
@@ -24,6 +25,7 @@ MISSING_COLUMNS = {
         Column("updated_at", DateTime(), nullable=True),
         Column("is_deleted", Boolean(), nullable=False, server_default=false()),
         Column("deleted_at", DateTime(), nullable=True),
+        Column("gender", String(50), nullable=True),
     ],
 }
 

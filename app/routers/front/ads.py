@@ -166,6 +166,7 @@ async def get_advertisement_detail(
         "age": ad.age,
         "weight": ad.weight,
         "color": ad.color,
+        "gender": ad.gender,
         "quantity": ad.quantity,
         "contact_phone": ad.contact_phone,
         "views_count": ad.views_count,
@@ -189,6 +190,7 @@ async def create_advertisement(
     age: str | None = Form(None, description="Yoshi (Masalan: '2 yosh', '1 yosh-u 3 oylik')"),
     weight: str | None = Form(None, description="Vazni (Masalan: '350 kg')"),
     color: str | None = Form(None, description="Rangi (Masalan: 'Qora', 'Qizil-ola')"),
+    gender: str | None = Form(None, description="Hayvon jinsi (Masalan: 'Erkak', 'Urgochi')"),
     quantity: int = Form(1, ge=1, description="Sotiladigan chorva soni"),
     contact_phone: str = Form(..., min_length=7, max_length=50, description="Aloqa telefon raqami"),
     category_id: int = Form(..., description="Tizimdan olingan kategoriya ID raqami"),
@@ -332,6 +334,7 @@ async def create_advertisement(
         age=age,
         weight=weight,
         color=color,
+        gender=gender,
         quantity=quantity,
         contact_phone=contact_phone,
         status=AdStatus.active,
@@ -382,27 +385,27 @@ async def create_advertisement(
 @router.put("/{id}", response_model=AdvertisementResponse)
 async def update_advertisement(
     id: uuid.UUID,
-    ad_update: AdvertisementUpdate,
+    title: str | None = Form(None, min_length=3, max_length=255),
+    description: str | None = Form(None, min_length=10),
+    price: float | None = Form(None),
+    is_negotiable: bool | None = Form(None),
+    age: str | None = Form(None),
+    weight: str | None = Form(None),
+    color: str | None = Form(None),
+    gender: str | None = Form(None),
+    quantity: int | None = Form(None, ge=1),
+    contact_phone: str | None = Form(None, min_length=7, max_length=50),
+    category_id: int | None = Form(None),
+    region_id: int | None = Form(None),
+    images: list[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    ### Foydalanuvchining o'z e'lonini tahrirlashi.
+    ### Foydalanuvchining o'z e'lonini tahrirlashi (Fayl yuklash bilan).
     
     Tizimga kirgan foydalanuvchi faqat o'ziga tegishli bo'lgan va o'chirilmagan e'lonni tahrirlashi mumkin.
-    
-    * Barcha kiruvchi maydonlar ixtiyoriy (optional). Faqat o'zgartiriladigan maydonlarni yuborish yetarli.
-    * Agar `images` ro'yxati yuborilsa, e'lonning eski rasmlari butunlay o'chirilib, yangilari bilan almashtiriladi.
-    * E'lon tahrirlanganda `updated_at` maydoni avtomatik tarzda tahrirlangan vaqt bilan yangilanadi.
-    
-    **So'rov sarlavhalari (Request Headers):**
-    * `Authorization: Bearer <access_token>` (Majburiy)
-    
-    **Muayyan Xatoliklar (Error States):**
-    * **401 Unauthorized**: JWT token yuborilmagan yoki eskirgan bo'lsa.
-    * **403 Forbidden**: Agar foydalanuvchi boshqa shaxsga tegishli e'lonni tahrirlamoqchi bo'lsa.
-    * **404 Not Found**: Agar e'lon topilmasa yoki o'chirilgan bo'lsa.
-    * **400 Bad Request**: Agar yangilanayotgan `category_id` yoki `region_id` tizimda mavjud bo'lmasa.
+    So'rov formatini **`multipart/form-data`** ko'rinishida yuborish lozim.
     """
     query = select(Advertisement).options(
         selectinload(Advertisement.images)
@@ -423,46 +426,85 @@ async def update_advertisement(
             detail="Sizda ushbu e'lonni tahrirlash huquqi yo'q."
         )
         
-    if ad_update.category_id is not None:
-        cat_query = select(Category).where(Category.id == ad_update.category_id)
+    if category_id is not None:
+        cat_query = select(Category).where(Category.id == category_id)
         cat_res = await db.execute(cat_query)
         if not cat_res.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Kiritilgan kategoriya mavjud emas."
             )
-        ad.category_id = ad_update.category_id
+        ad.category_id = category_id
         
-    if ad_update.region_id is not None:
-        reg_query = select(Region).where(Region.id == ad_update.region_id)
+    if region_id is not None:
+        reg_query = select(Region).where(Region.id == region_id)
         reg_res = await db.execute(reg_query)
         if not reg_res.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Kiritilgan hudud/viloyat mavjud emas."
             )
-        ad.region_id = ad_update.region_id
+        ad.region_id = region_id
 
-    update_data = ad_update.model_dump(exclude_unset=True, exclude={"category_id", "region_id", "images"})
-    for key, value in update_data.items():
-        setattr(ad, key, value)
+    if title is not None:
+        ad.title = title
+    if description is not None:
+        ad.description = description
+    if price is not None:
+        ad.price = price
+    if is_negotiable is not None:
+        ad.is_negotiable = is_negotiable
+    if age is not None:
+        ad.age = age
+    if weight is not None:
+        ad.weight = weight
+    if color is not None:
+        ad.color = color
+    if gender is not None:
+        ad.gender = gender
+    if quantity is not None:
+        ad.quantity = quantity
+    if contact_phone is not None:
+        ad.contact_phone = contact_phone
         
-    if ad_update.images is not None:
-        from sqlalchemy import delete
-        await db.execute(delete(Image).where(Image.advertisement_id == ad.id))
+    valid_images = [img for img in images if img and img.filename] if images else []
+    if valid_images:
+        import os
+        import shutil
+        # Delete old images from disk
+        for img in ad.images:
+            if img.image_url and img.image_url.startswith("/uploads/"):
+                filename = img.image_url.replace("/uploads/", "")
+                file_path = os.path.join("uploads", filename)
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
         
-        valid_images = [img for img in ad_update.images if img.image_url]
-        has_main = any(img.is_main for img in valid_images)
-        for idx, img_in in enumerate(valid_images):
-            is_main = img_in.is_main
-            if not has_main and idx == 0:
-                is_main = True
+        # Clear the old images from relationship collection (automatically deletes from DB due to delete-orphan cascade)
+        ad.images.clear()
+        
+        # Save and append new images
+        upload_dir = os.path.join("uploads", "ad_pics")
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        for idx, img in enumerate(valid_images):
+            file_ext = os.path.splitext(img.filename)[1]
+            unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+            file_path = os.path.join(upload_dir, unique_filename)
+            
+            content = await img.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            
+            is_main = (idx == 0)
+            
             new_image = Image(
-                advertisement_id=ad.id,
-                image_url=img_in.image_url,
+                image_url=f"/uploads/ad_pics/{unique_filename}",
                 is_main=is_main
             )
-            db.add(new_image)
+            ad.images.append(new_image)
 
     ad.updated_at = datetime.utcnow()
     await db.commit()

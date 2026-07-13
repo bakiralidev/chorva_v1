@@ -90,7 +90,8 @@ from app.admin import (
     AdvertisementAdmin, 
     ImageAdmin,
     OfferAdmin,
-    VerificationCodeAdmin
+    VerificationCodeAdmin,
+    SliderAdmin
 )
 
 # SQLAdmin and WTForms 3.2+ compatibility monkey patch
@@ -218,6 +219,7 @@ admin.add_view(AdvertisementAdmin)
 admin.add_view(ImageAdmin)
 admin.add_view(OfferAdmin)
 admin.add_view(VerificationCodeAdmin)
+admin.add_view(SliderAdmin)
 
 @app.get("/")
 async def root():

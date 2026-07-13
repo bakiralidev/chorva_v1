@@ -26,6 +26,7 @@ class Advertisement(Base):
     age: Mapped[str | None] = mapped_column(String(100), nullable=True)
     weight: Mapped[str | None] = mapped_column(String(100), nullable=True)
     color: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(50), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     
     contact_phone: Mapped[str] = mapped_column(String(50))

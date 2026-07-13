@@ -5,6 +5,12 @@ from pydantic import BaseModel, EmailStr, Field, model_validator, ConfigDict
 class UserBase(BaseModel):
     email: EmailStr | None = None
     phone_number: str | None = None
+    telegram_username: str | None = None
+
+class UserUpdate(BaseModel):
+    email: EmailStr | None = None
+    phone_number: str | None = None
+    telegram_username: str | None = None
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, description="Password must be at least 6 characters")

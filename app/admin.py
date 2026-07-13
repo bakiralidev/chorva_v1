@@ -20,6 +20,7 @@ from app.models.advertisement import Advertisement
 from app.models.image import Image
 from app.models.offer import Offer
 from app.models.verification import VerificationCode
+from app.models.slider import Slider
 from app.auth.security import hash_password, verify_password
 from app.utils.lang import admin_lang
 from app.utils.admin_i18n import get_admin_t
@@ -96,6 +97,7 @@ admin_auth_backend = AdminAuth(secret_key=settings.SECRET_KEY)
 class UserForm(Form):
     email = StringField("Email")
     phone_number = StringField("Telefon raqam")
+    telegram_username = StringField("Telegram Username")
     password = PasswordField("Parol")
     is_active = BooleanField("Faol")
     is_verified = BooleanField("Tasdiqlangan")
@@ -105,8 +107,8 @@ class UserForm(Form):
 
 
 class UserAdmin(ModelView, model=User):
-    column_list = ["id", "email", "phone_number", "is_active", "is_verified", "accepted_offer", "is_superuser", "created_at"]
-    column_searchable_list = ["email", "phone_number"]
+    column_list = ["id", "email", "phone_number", "telegram_username", "is_active", "is_verified", "accepted_offer", "is_superuser", "created_at"]
+    column_searchable_list = ["email", "phone_number", "telegram_username"]
     column_sortable_list = ["created_at"]
     form = UserForm
 
@@ -125,6 +127,7 @@ class UserAdmin(ModelView, model=User):
             "id": t["col_id"],
             "email": t["col_email"],
             "phone_number": t["col_phone"],
+            "telegram_username": "Telegram Username",
             "is_active": t["col_is_active"],
             "is_verified": "Tasdiqlangan",
             "accepted_offer": t["col_accepted_offer"],
@@ -149,6 +152,7 @@ class UserAdmin(ModelView, model=User):
         data["email"] = data.get("email") or None
         data["phone_number"] = data.get("phone_number") or None
         data["preferred_lang"] = data.get("preferred_lang") or None
+        data["telegram_username"] = data.get("telegram_username") or None
 
         if not data["email"] and not data["phone_number"]:
             raise ValueError("Foydalanuvchi uchun email yoki telefon raqamidan kamida bittasi majburiy.")
@@ -421,7 +425,7 @@ class AdvertisementAdmin(ModelView, model=Advertisement):
         "user", "category", "region",
         "title", "description", "price",
         "is_negotiable", "age", "weight",
-        "color", "quantity", "contact_phone",
+        "color", "gender", "quantity", "contact_phone",
         "status", "is_top"
     ]
 
@@ -433,6 +437,16 @@ class AdvertisementAdmin(ModelView, model=Advertisement):
         ]
         if missing_fields:
             raise ValueError("E'lon uchun foydalanuvchi, kategoriya va hudud majburiy.")
+
+        # Ensure status is correctly coerced from string to AdStatus enum
+        status_val = data.get("status")
+        if status_val:
+            from app.models.advertisement import AdStatus
+            if isinstance(status_val, str):
+                model.status = AdStatus(status_val)
+                data["status"] = AdStatus(status_val)
+            else:
+                model.status = status_val
 
 class ImageAdmin(ModelView, model=Image):
     column_list = ["id", "advertisement_id", "image_url", "is_main"]
@@ -658,4 +672,59 @@ class VerificationCodeAdmin(ModelView, model=VerificationCode):
     @property
     def name_plural(self) -> str:
         return "Tasdiqlash kodlari"
+
+
+class SliderForm(Form):
+    image_url = FileField("Slider Rasmi")
+    link = StringField("Havola (Link) (Ixtiyoriy)")
+
+
+class SliderAdmin(ModelView, model=Slider):
+    column_list = ["id", "image_url", "link"]
+    form = SliderForm
+
+    @property
+    def name(self) -> str:
+        return "Slider"
+
+    @property
+    def name_plural(self) -> str:
+        return "Sliderlar"
+
+    column_formatters = {
+        "image_url": lambda m, a: Markup(f'<img src="{m.image_url}" width="150" style="border-radius: 5px; object-fit: cover;" />') if m.image_url else ""
+    }
+
+    async def on_model_change(self, data: dict, model: Slider, is_created: bool, request: Request) -> None:
+        file_data = data.get("image_url")
+        if file_data and hasattr(file_data, "filename") and file_data.filename:
+            ext = os.path.splitext(file_data.filename)[1]
+            unique_filename = f"{uuid.uuid4()}{ext}"
+            
+            upload_dir = os.path.join("uploads", "sliders")
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(upload_dir, unique_filename)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file_data.file, buffer)
+            
+            data["image_url"] = f"/uploads/sliders/{unique_filename}"
+            model.image_url = f"/uploads/sliders/{unique_filename}"
+        else:
+            if not is_created:
+                if "image_url" in data:
+                    del data["image_url"]
+            else:
+                data["image_url"] = ""
+                model.image_url = ""
+
+    async def on_model_delete(self, model: Slider, request: Request) -> None:
+        if model.image_url and model.image_url.startswith("/uploads/"):
+            filename = model.image_url.replace("/uploads/", "")
+            file_path = os.path.join("uploads", filename)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
 

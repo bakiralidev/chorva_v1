@@ -64,13 +64,19 @@ async def get_favorites(
     Foydalanuvchining sevimli e'lonlari ro'yxatini olish.
     Faqat joriy foydalanuvchiga tegishli sevimlilarni qaytaradi.
     """
-    # Use selectinload to eagerly load the advertisement
+    # Use selectinload to eagerly load the advertisement and its images
     from sqlalchemy.orm import selectinload
     result = await db.execute(
-        select(Favorite).options(selectinload(Favorite.advertisement)).where(Favorite.user_id == current_user.id)
+        select(Favorite).options(
+            selectinload(Favorite.advertisement).selectinload(Advertisement.images)
+        ).where(Favorite.user_id == current_user.id)
     )
     favorites = result.scalars().all()
 
-    # E'lonlarni ajratib olish
-    ads = [fav.advertisement for fav in favorites]
+    # E'lonlarni ajratib olish va o'chirilmaganlarini qaytarish
+    ads = [
+        fav.advertisement 
+        for fav in favorites 
+        if fav.advertisement is not None and not fav.advertisement.is_deleted
+    ]
     return ads
