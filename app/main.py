@@ -16,6 +16,7 @@ from app.routers import front_app, mobile_app, admin_app
 from app.utils.lang import admin_lang
 from app.utils.admin_i18n import get_admin_t
 from app.logging_config import setup_logging
+from app.utils.telegram.bot import start_bot_polling, stop_bot_polling
 
 setup_logging()
 
@@ -91,7 +92,8 @@ from app.admin import (
     ImageAdmin,
     OfferAdmin,
     VerificationCodeAdmin,
-    SliderAdmin
+    SliderAdmin,
+    TelegramLinkAdmin
 )
 
 # SQLAdmin and WTForms 3.2+ compatibility monkey patch
@@ -130,11 +132,15 @@ admin_app.add_middleware(RequestLoggingMiddleware, log_responses=False)
 @app.on_event("startup")
 async def log_startup() -> None:
     logger.info("Application startup: %s", settings.PROJECT_NAME)
+    # Telegram botni polling rejimida ishga tushirish
+    await start_bot_polling()
 
 
 @app.on_event("shutdown")
 async def log_shutdown() -> None:
     logger.info("Application shutdown: %s", settings.PROJECT_NAME)
+    # Telegram botni to'xtatish
+    await stop_bot_polling()
 
 # Rasmlarni yuklash va ularga havola qilish uchun static papkani ulaymiz
 os.makedirs("uploads", exist_ok=True)
@@ -220,6 +226,7 @@ admin.add_view(ImageAdmin)
 admin.add_view(OfferAdmin)
 admin.add_view(VerificationCodeAdmin)
 admin.add_view(SliderAdmin)
+admin.add_view(TelegramLinkAdmin)
 
 @app.get("/")
 async def root():

@@ -33,6 +33,9 @@ async_session_local = async_sessionmaker(
     expire_on_commit=False
 )
 
+# Alias — Telegram bot handler va boshqa tashqi kodlar uchun
+AsyncSessionLocal = async_session_local
+
 # Base class for SQLAlchemy models
 class Base(DeclarativeBase):
     pass

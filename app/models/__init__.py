@@ -9,6 +9,7 @@ from app.models.favorite import Favorite
 from app.models.offer import Offer, OfferTranslation
 from app.models.verification import VerificationCode
 from app.models.slider import Slider
+from app.models.telegram_link import TelegramLink
 
 __all__ = [
     "Base",
@@ -24,5 +25,5 @@ __all__ = [
     "OfferTranslation",
     "VerificationCode",
     "Slider",
+    "TelegramLink",
 ]
-

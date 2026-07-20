@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.routers.front.auth import router as front_auth_router
+from app.routers.front.auth_google import router as front_auth_google_router
 from app.routers.front.directories import router as front_directories_router
 from app.routers.front.ads import router as front_ads_router
 from app.routers.front.offers import router as front_offers_router
@@ -45,6 +46,7 @@ admin_app = FastAPI(
 
 # Routerlarni tegishli sub-ilovalarga ulash
 front_app.include_router(front_auth_router)
+front_app.include_router(front_auth_google_router)  # Google OAuth2
 front_app.include_router(front_directories_router)
 front_app.include_router(front_ads_router)
 front_app.include_router(front_offers_router)
@@ -61,5 +63,3 @@ mobile_app.include_router(mobile_sliders_router)
 admin_app.include_router(admin_router)
 
 __all__ = ["front_app", "mobile_app", "admin_app"]
-
-

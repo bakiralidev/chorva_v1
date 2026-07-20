@@ -1,3 +1,14 @@
+"""
+auth.py — Mobile API autentifikatsiya endpointlari.
+
+Bu router front/auth.py bilan bir xil mantiqqa ega,
+faqat prefix va tag farqli.
+
+## OTP yuborish kanallari:
+- 📱 **Telegram**: @chorva_uzbot ga /start bosib telefon ulashilgan bo'lsa
+- 📧 **Email**: Email kiritilgan va SMTP sozlangan bo'lsa
+- 🖥️ **Console**: Development fallback
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,18 +18,25 @@ from sqlalchemy import or_
 from app.database import get_db
 from app.models.user import User
 from app.models.verification import VerificationCode
+from app.models.telegram_link import TelegramLink
 from app.schemas.user import UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate
 from app.schemas.token import Token, TokenRefreshRequest
 from app.auth.security import hash_password, verify_password, create_access_token, generate_refresh_token
 from app.auth.dependencies import get_current_user
 from app.models.refresh_token import RefreshToken
 from app.config import settings
+from app.utils.telegram.otp import send_otp_via_telegram
+from app.utils.email_service import send_otp_email
 import random
 import string
 import uuid
+import logging
 from datetime import datetime, timedelta
 
+logger = logging.getLogger("app.auth.mobile")
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
 
 async def create_user_refresh_token(db: AsyncSession, user_id: uuid.UUID) -> str:
     token_str = generate_refresh_token()
@@ -32,49 +50,78 @@ async def create_user_refresh_token(db: AsyncSession, user_id: uuid.UUID) -> str
     await db.commit()
     return token_str
 
-@router.post("/register", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
-    """
-    ### Yangi foydalanuvchini ro'yxatdan o'tkazish.
-    
-    Ushbu endpoint yangi foydalanuvchi akkauntini yaratish uchun ishlatiladi.
-    
-    * **Email** yoki **Telefon raqamidan** kamida bittasini kiritish majburiy.
-    * Parol kamida **6 ta belgidan** iborat bo'lishi kerak.
 
-    **Muayyan Xatoliklar (Error States):**
-    * **400 Bad Request**: 
-      * Agar foydalanuvchi Ofertaga rozi bo'lmasa.
-      * Agar email ham, telefon raqami ham yuborilmagan bo'lsa.
-      * Agar kiritilgan email yoki telefon raqami allaqachon ro'yxatdan o'tgan bo'lsa.
-    """
+async def _send_otp(
+    phone_number: str | None,
+    email: str | None,
+    otp_code: str,
+    db: AsyncSession,
+) -> str:
+    """OTP ni mavjud kanalga yuboradi. Ustuvorlik: Telegram → Email → Console"""
+    if phone_number:
+        result = await db.execute(
+            select(TelegramLink).where(TelegramLink.phone_number == phone_number)
+        )
+        tg_link = result.scalar_one_or_none()
+        if tg_link:
+            sent = await send_otp_via_telegram(tg_link.chat_id, otp_code, phone_number)
+            if sent:
+                return "telegram"
+
+    if email:
+        sent = await send_otp_email(email, otp_code)
+        if sent:
+            return "email"
+
+    logger.warning("OTP CONSOLE FALLBACK [%s]: %s", phone_number or email, otp_code)
+    print(f"\n{'='*50}")
+    print(f"[OTP CONSOLE] {phone_number or email} uchun tasdiqlash kodi: {otp_code}")
+    print(f"{'='*50}\n")
+    return "console"
+
+
+@router.post(
+    "/register",
+    response_model=UserRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Yangi foydalanuvchini ro'yxatdan o'tkazish",
+    description="""
+### Yangi foydalanuvchini ro'yxatdan o'tkazish
+
+**Majburiy shartlar:**
+- `email` yoki `phone_number` dan kamida bittasi kiritilishi shart
+- `password` kamida **6 ta belgidan** iborat bo'lishi kerak
+- `accepted_offer` maydonini `true` qilib yuborish shart
+
+**OTP yuborish kanallari:**
+- 📱 **Telegram**: @chorva_uzbot ga `/start` bosib telefon ulashilgan bo'lsa → OTP Telegram'ga boradi
+- 📧 **Email**: Email kiritilgan bo'lsa → Gmailga OTP boradi
+- Javobdagi `otp_channel` qaysi kanal ishlatilganini ko'rsatadi
+
+**Muayyan Xatoliklar:**
+- **400**: Ofertaga rozi bo'lmagan
+- **400**: Email ham, telefon ham yuborilmagan
+- **400**: Email allaqachon ro'yxatdan o'tgan
+- **400**: Telefon raqam allaqachon ro'yxatdan o'tgan
+""",
+)
+async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     if not user_in.accepted_offer:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ro'yxatdan o'tish uchun Ommaviy ofertaga rozi bo'lishingiz shart."
         )
 
-    # Email unikal ekanligini tekshirish
     if user_in.email:
-        query = select(User).where(User.email == user_in.email)
-        result = await db.execute(query)
+        result = await db.execute(select(User).where(User.email == user_in.email))
         if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ushbu email tizimda ro'yxatdan o'tgan."
-            )
-            
-    # Telefon raqam unikal ekanligini tekshirish
-    if user_in.phone_number:
-        query = select(User).where(User.phone_number == user_in.phone_number)
-        result = await db.execute(query)
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ushbu telefon raqami tizimda ro'yxatdan o'tgan."
-            )
+            raise HTTPException(status_code=400, detail="Ushbu email tizimda ro'yxatdan o'tgan.")
 
-    # Parolni hash qilish va foydalanuvchini yaratish
+    if user_in.phone_number:
+        result = await db.execute(select(User).where(User.phone_number == user_in.phone_number))
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Ushbu telefon raqami tizimda ro'yxatdan o'tgan.")
+
     hashed_pwd = hash_password(user_in.password)
     new_user = User(
         email=user_in.email,
@@ -83,191 +130,185 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         is_active=False,
         is_verified=False,
         accepted_offer=True,
-        is_superuser=False
+        is_superuser=False,
+        auth_provider="local",
     )
     db.add(new_user)
-    await db.flush() # id ni olish uchun
+    await db.flush()
 
-    # Tasdiqlash kodini yaratish (6 xonali)
     code = ''.join(random.choices(string.digits, k=6))
     expires_at = datetime.utcnow() + timedelta(minutes=5)
-    
-    verification = VerificationCode(
-        user_id=new_user.id,
-        code=code,
-        expires_at=expires_at
-    )
+    verification = VerificationCode(user_id=new_user.id, code=code, expires_at=expires_at)
     db.add(verification)
     await db.commit()
     await db.refresh(new_user)
-    
-    print(f"\n[{new_user.email or new_user.phone_number} uchun tasdiqlash kodi]: {code}\n")
-    
-    return {
-        "user": new_user,
-        "verification_code": code,
-        "message": "Tasdiqlash kodi yuborildi. Iltimos kodni kiriting."
+
+    channel = await _send_otp(
+        phone_number=user_in.phone_number,
+        email=user_in.email,
+        otp_code=code,
+        db=db,
+    )
+
+    channel_messages = {
+        "telegram": "Tasdiqlash kodi Telegram orqali yuborildi. @chorva_uzbot da tekshiring.",
+        "email": f"Tasdiqlash kodi {user_in.email} elektron pochta manzilingizga yuborildi.",
+        "console": "Tasdiqlash kodi server logiga yozildi (development rejimi).",
     }
 
-@router.post("/verify", response_model=Token)
-async def verify_code(
-    verify_in: VerifyCode,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    ### Tasdiqlash kodi orqali ro'yxatdan o'tishni yakunlash va Token olish.
-    """
+    return {
+        "user": new_user,
+        "message": channel_messages.get(channel, "Tasdiqlash kodi yuborildi."),
+        "otp_channel": channel,
+    }
+
+
+@router.post(
+    "/verify",
+    response_model=Token,
+    summary="OTP kodni tasdiqlash va JWT token olish",
+    description="""
+### OTP kodni tasdiqlash va tizimga kirish
+
+**So'rov maydonlari:**
+- `username` — ro'yxatdan o'tishda ishlatilgan email yoki telefon raqami
+- `code` — 6 xonali OTP kodi
+
+**Muayyan Xatoliklar:**
+- **404**: Foydalanuvchi topilmadi
+- **400**: Tasdiqlash kodi topilmadi
+- **400**: Kod muddati tugagan (5 daqiqa)
+- **400**: Kod noto'g'ri
+""",
+)
+async def verify_code(verify_in: VerifyCode, db: AsyncSession = Depends(get_db)):
     query = select(User).where(
-        or_(
-            User.email == verify_in.username,
-            User.phone_number == verify_in.username
-        )
+        or_(User.email == verify_in.username, User.phone_number == verify_in.username)
     )
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Foydalanuvchi topilmadi."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Foydalanuvchi topilmadi.")
 
-    # Eng so'nggi yuborilgan kodni olish
-    v_query = select(VerificationCode).where(
-        VerificationCode.user_id == user.id
-    ).order_by(VerificationCode.created_at.desc())
-    v_result = await db.execute(v_query)
+    v_result = await db.execute(
+        select(VerificationCode)
+        .where(VerificationCode.user_id == user.id)
+        .order_by(VerificationCode.created_at.desc())
+    )
     verification = v_result.scalars().first()
 
     if not verification:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tasdiqlash kodi topilmadi. Qaytadan urinib ko'ring."
-        )
-
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi topilmadi. Qaytadan urinib ko'ring.")
     if verification.is_expired:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tasdiqlash kodi muddati tugagan."
-        )
-
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi muddati tugagan.")
     if verification.code != verify_in.code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tasdiqlash kodi noto'g'ri."
-        )
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi noto'g'ri.")
 
-    # Foydalanuvchini faollashtirish
     user.is_verified = True
     user.is_active = True
-    
-    # Kodni o'chirish (bir marta ishlatiladigan)
     await db.delete(verification)
     await db.commit()
 
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = await create_user_refresh_token(db, user.id)
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
-@router.post("/login", response_model=Token)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    ### Foydalanuvchi profiliga kirish va JWT Access Token olish.
-    
-    Tizimda avtorizatsiyadan o'tish uchun ishlatiladi. `OAuth2` standartiga mos keladi.
-    
-    * **username** maydoniga foydalanuvchining **email** manzili yoki **telefon raqami** kiritilishi mumkin.
-    * Olingan token keyingi yopiq (protected) endpointlar uchun **Authorization: Bearer <token>** sarlavhasida yuboriladi.
 
-    **Muayyan Xatoliklar (Error States):**
-    * **400 Bad Request**: 
-      * Login yoki parol noto'g'ri bo'lsa.
-      * Foydalanuvchi akkaunti faol bo'lmasa.
-    """
-    # Foydalanuvchini email yoki telefon orqali qidirish
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Email/telefon va parol bilan kirish",
+    description="""
+### Foydalanuvchi profiliga kirish
+
+**So'rov maydonlari:**
+- `username` — email yoki telefon raqami
+- `password` — foydalanuvchi paroli
+
+> ⚠️ Google OAuth2 orqali ro'yxatdan o'tgan foydalanuvchilar bu endpoint orqali kira olmaydi.
+
+**Muayyan Xatoliklar:**
+- **400**: Login yoki parol noto'g'ri
+- **400**: Akkaunt faol emas
+- **400**: Google akkaunt — parol yo'q
+""",
+)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     query = select(User).where(
-        or_(
-            User.email == form_data.username,
-            User.phone_number == form_data.username
-        )
+        or_(User.email == form_data.username, User.phone_number == form_data.username)
     )
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if not user:
+        raise HTTPException(status_code=400, detail="Kiritilgan login yoki parol noto'g'ri.")
+
+    if user.auth_provider == "google" or user.hashed_password is None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Kiritilgan login yoki parol noto'g'ri."
+            status_code=400,
+            detail="Bu akkaunt Google orqali ro'yxatdan o'tgan. 'Google bilan kirish' tugmasidan foydalaning."
         )
+
+    if not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Kiritilgan login yoki parol noto'g'ri.")
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Foydalanuvchi akkaunti faol emas."
-        )
+        raise HTTPException(status_code=400, detail="Foydalanuvchi akkaunti faol emas.")
 
-    # JWT access token yaratish
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = await create_user_refresh_token(db, user.id)
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Joriy foydalanuvchi ma'lumotlarini olish",
+    description="""
+### Tizimga kirgan foydalanuvchining ma'lumotlarini olish
+
+**So'rov sarlavhalari:**
+- `Authorization: Bearer <access_token>` (Majburiy)
+
+**Muayyan Xatoliklar:**
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
 async def get_my_profile(current_user: User = Depends(get_current_user)):
-    """
-    ### Tizimga kirgan foydalanuvchining shaxsiy ma'lumotlarini olish.
-    
-    Faqatgina ro'yxatdan o'tgan va `Bearer` tokenga ega bo'lgan foydalanuvchilar foydalana oladi.
-
-    **So'rov sarlavhalari (Request Headers):**
-    * `Authorization: Bearer <access_token>` (Majburiy)
-
-    **Muayyan Xatoliklar (Error States):**
-    * **401 Unauthorized**: Token yuborilmagan, eskirgan yoki noto'g'ri bo'lsa.
-    """
     return current_user
 
 
-@router.put("/me", response_model=UserResponse)
+@router.put(
+    "/me",
+    response_model=UserResponse,
+    summary="Foydalanuvchi ma'lumotlarini yangilash",
+    description="""
+### Foydalanuvchining ma'lumotlarini tahrirlash
+
+**Tahrirlash mumkin bo'lgan maydonlar:**
+- `email`, `phone_number`, `telegram_username`
+
+**Muayyan Xatoliklar:**
+- **400**: Email yoki telefon boshqa foydalanuvchida mavjud
+- **401**: Token noto'g'ri
+""",
+)
 async def update_my_profile(
     profile_update: UserUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    ### Foydalanuvchining shaxsiy ma'lumotlarini (email, telefon, telegram_username) tahrirlash.
-    """
     if profile_update.email is not None and profile_update.email != current_user.email:
-        # Check if email is already taken
-        query = select(User).where(User.email == profile_update.email)
-        res = await db.execute(query)
+        res = await db.execute(select(User).where(User.email == profile_update.email))
         if res.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ushbu email allaqachon ro'yxatdan o'tgan."
-            )
+            raise HTTPException(status_code=400, detail="Ushbu email allaqachon ro'yxatdan o'tgan.")
         current_user.email = profile_update.email
 
     if profile_update.phone_number is not None and profile_update.phone_number != current_user.phone_number:
-        # Check if phone number is already taken
-        query = select(User).where(User.phone_number == profile_update.phone_number)
-        res = await db.execute(query)
+        res = await db.execute(select(User).where(User.phone_number == profile_update.phone_number))
         if res.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ushbu telefon raqami allaqachon ro'yxatdan o'tgan."
-            )
+            raise HTTPException(status_code=400, detail="Ushbu telefon raqami allaqachon ro'yxatdan o'tgan.")
         current_user.phone_number = profile_update.phone_number
 
     if profile_update.telegram_username is not None:
@@ -279,14 +320,21 @@ async def update_my_profile(
     return current_user
 
 
-@router.post("/refresh", response_model=Token)
-async def refresh_token(
-    refresh_in: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    ### Refresh Token yordamida Access Token va Refresh Tokenni yangilash (Rotation).
-    """
+@router.post(
+    "/refresh",
+    response_model=Token,
+    summary="Access Token ni yangilash",
+    description="""
+### Refresh Token orqali tokenlarni yangilash (Token Rotation)
+
+**So'rov tanasi:**
+- `refresh_token` — avval olingan refresh token
+
+**Muayyan Xatoliklar:**
+- **401**: Token noto'g'ri, bekor qilingan yoki muddati tugagan
+""",
+)
+async def refresh_token(refresh_in: TokenRefreshRequest, db: AsyncSession = Depends(get_db)):
     query = select(RefreshToken).where(
         RefreshToken.token == refresh_in.refresh_token,
         RefreshToken.is_revoked == False
@@ -295,58 +343,41 @@ async def refresh_token(
     db_token = result.scalar_one_or_none()
 
     if not db_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token noto'g'ri yoki bekor qilingan."
-        )
+        raise HTTPException(status_code=401, detail="Refresh token noto'g'ri yoki bekor qilingan.")
 
     if datetime.utcnow() > db_token.expires_at:
         await db.delete(db_token)
         await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token muddati tugagan. Iltimos qaytadan login qiling."
-        )
+        raise HTTPException(status_code=401, detail="Refresh token muddati tugagan.")
 
-    user_query = select(User).where(User.id == db_token.user_id)
-    user_result = await db.execute(user_query)
+    user_result = await db.execute(select(User).where(User.id == db_token.user_id))
     user = user_result.scalar_one_or_none()
 
     if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Foydalanuvchi hisobi faol emas yoki topilmadi."
-        )
+        raise HTTPException(status_code=401, detail="Foydalanuvchi hisobi faol emas.")
 
     await db.delete(db_token)
     await db.commit()
 
     access_token = create_access_token(data={"sub": str(user.id)})
     new_refresh_token = await create_user_refresh_token(db, user.id)
-
-    return {
-        "access_token": access_token,
-        "refresh_token": new_refresh_token,
-        "token_type": "bearer"
-    }
+    return {"access_token": access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
 
-@router.post("/logout")
-async def logout(
-    refresh_in: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    ### Tizimdan chiqish va Refresh Tokenni bekor qilish (o'chirish).
-    """
-    query = select(RefreshToken).where(
-        RefreshToken.token == refresh_in.refresh_token
-    )
-    result = await db.execute(query)
+@router.post(
+    "/logout",
+    summary="Tizimdan chiqish",
+    description="""
+### Tizimdan chiqish va Refresh Tokenni bekor qilish
+
+**So'rov tanasi:**
+- `refresh_token` — bekor qilinishi kerak bo'lgan token
+""",
+)
+async def logout(refresh_in: TokenRefreshRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(RefreshToken).where(RefreshToken.token == refresh_in.refresh_token))
     db_token = result.scalar_one_or_none()
-
     if db_token:
         await db.delete(db_token)
         await db.commit()
-
     return {"message": "Tizimdan muvaffaqiyatli chiqildi."}

@@ -21,6 +21,7 @@ from app.models.image import Image
 from app.models.offer import Offer
 from app.models.verification import VerificationCode
 from app.models.slider import Slider
+from app.models.telegram_link import TelegramLink
 from app.auth.security import hash_password, verify_password
 from app.utils.lang import admin_lang
 from app.utils.admin_i18n import get_admin_t
@@ -728,3 +729,21 @@ class SliderAdmin(ModelView, model=Slider):
                 except Exception:
                     pass
 
+class TelegramLinkAdmin(ModelView, model=TelegramLink):
+    """
+    Admin view — Telegram bot orqali ulangan telefon raqamlar va chat ID lar.
+    Bu jadval bot /start buyrug'i ishlatilganda avtomatik to'ldiriladi.
+    """
+    name = "Telegram Link"
+    name_plural = "Telegram Links"
+    icon = "fa-brands fa-telegram"
+
+    column_list = [TelegramLink.phone_number, TelegramLink.chat_id, TelegramLink.created_at]
+    column_searchable_list = [TelegramLink.phone_number, TelegramLink.chat_id]
+    column_sortable_list = [TelegramLink.created_at, TelegramLink.phone_number]
+    column_default_sort = [(TelegramLink.created_at, True)]
+
+    # Faqat o'qish — bot tomonidan to'ldiriladi
+    can_create = False
+    can_edit = False
+    can_delete = True
