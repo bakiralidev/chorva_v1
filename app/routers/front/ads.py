@@ -345,12 +345,12 @@ async def create_advertisement(
     await db.flush()  # ID sini olish uchun flush
 
     # Rasmlarni yuklash va bazaga bog'lash
-    if images:
+    valid_images = [img for img in images if img and getattr(img, 'filename', None) and len(img.filename.strip()) > 0] if images else []
+    if valid_images:
         import os
         upload_dir = os.path.join("uploads", "ad_pics")
         os.makedirs(upload_dir, exist_ok=True)
         
-        valid_images = [img for img in images if img.filename]
         for idx, img in enumerate(valid_images):
             # Unikal nom beramiz va diskka saqlaymiz
             file_ext = os.path.splitext(img.filename)[1]
@@ -467,12 +467,12 @@ async def update_advertisement(
     if contact_phone is not None:
         ad.contact_phone = contact_phone
         
-    valid_images = [img for img in images if img and img.filename] if images else []
+    valid_images = [img for img in images if img and getattr(img, 'filename', None) and len(img.filename.strip()) > 0] if images else []
     if valid_images:
         import os
         import shutil
         # Delete old images from disk
-        for img in ad.images:
+        for img in list(ad.images):
             if img.image_url and img.image_url.startswith("/uploads/"):
                 filename = img.image_url.replace("/uploads/", "")
                 file_path = os.path.join("uploads", filename)
@@ -501,9 +501,11 @@ async def update_advertisement(
             is_main = (idx == 0)
             
             new_image = Image(
+                advertisement_id=ad.id,
                 image_url=f"/uploads/ad_pics/{unique_filename}",
                 is_main=is_main
             )
+            db.add(new_image)
             ad.images.append(new_image)
 
     ad.updated_at = datetime.utcnow()

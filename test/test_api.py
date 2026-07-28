@@ -5,6 +5,37 @@ from app.main import app
 
 client = TestClient(app)
 
+def get_latest_verification_code(email: str) -> str:
+    async def _fetch():
+        from app.database import async_session_local
+        from app.models.user import User
+        from app.models.verification import VerificationCode
+        from sqlalchemy.future import select
+        async with async_session_local() as db:
+            res = await db.execute(
+                select(VerificationCode)
+                .join(User)
+                .where(User.email == email)
+                .order_by(VerificationCode.id.desc())
+            )
+            code_obj = res.scalars().first()
+            return code_obj.code if code_obj else None
+    return asyncio.run(_fetch())
+
+def ensure_user_active(email: str):
+    async def _activate():
+        from app.database import async_session_local
+        from app.models.user import User
+        from sqlalchemy.future import select
+        async with async_session_local() as db:
+            res = await db.execute(select(User).where(User.email == email))
+            u = res.scalar_one_or_none()
+            if u and not u.is_active:
+                u.is_active = True
+                u.is_verified = True
+                await db.commit()
+    asyncio.run(_activate())
+
 def run_tests():
     print("Front API Endpointlarini test qilish boshlandi...\n")
     client.__enter__()
@@ -22,15 +53,17 @@ def run_tests():
         if reg_response.status_code == 201:
             print("   [PASS] Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi.")
             # Akkauntni faollashtirish (verify)
+            v_code = get_latest_verification_code(test_user_data["email"])
             verify_data = {
                 "username": test_user_data["email"],
-                "code": reg_response.json()["verification_code"]
+                "code": v_code
             }
             verify_res = client.post("/api/v1/front/auth/verify", json=verify_data)
             assert verify_res.status_code == 200, f"Verification failed: {verify_res.text}"
             print("   [PASS] Foydalanuvchi akkaunti faollashtirildi.")
         elif reg_response.status_code == 400 and "tizimda ro'yxatdan o'tgan" in reg_response.json().get("detail", ""):
             print("   [INFO] Foydalanuvchi allaqachon mavjud, davom etamiz.")
+            ensure_user_active(test_user_data["email"])
         else:
             print(f"   [FAIL] Ro'yxatdan o'tishda xatolik: {reg_response.status_code} - {reg_response.text}")
             sys.exit(1)
@@ -160,17 +193,21 @@ def run_tests():
         print("\n9. /api/v1/front/ads/{id} (PUT - e'lonni tahrirlash) test qilinmoqda...")
         edit_data = {
             "title": "Simmental sigir, sog'lom (TAHRIRLANDI)",
-            "price": 13500000.0,
+            "price": "13500000.0",
             "description": "Yangi tahrirlangan ma'lumotlar bilan batafsil tavsif.",
             "contact_phone": "+998909990000"
         }
-        edit_response = client.put(f"/api/v1/front/ads/{ad_id}", json=edit_data, headers=headers)
+        edit_files = [
+            ("images", ("updated_cow.jpg", b"fake image binary content", "image/jpeg"))
+        ]
+        edit_response = client.put(f"/api/v1/front/ads/{ad_id}", data=edit_data, files=edit_files, headers=headers)
         assert edit_response.status_code == 200, f"E'lonni tahrirlashda xatolik: {edit_response.text}"
         edited_ad = edit_response.json()
         assert edited_ad["title"] == "Simmental sigir, sog'lom (TAHRIRLANDI)", "Tahrirlangan sarlavha mos kelmadi"
         assert edited_ad["price"] == 13500000.0, "Tahrirlangan narx mos kelmadi"
+        assert len(edited_ad["images"]) > 0, "Yangi rasm saqlanmadi"
         assert edited_ad["updated_at"] is not None, "updated_at maydoni to'ldirilmagan"
-        print("   [PASS] E'lon muvaffaqiyatli tahrirlandi.")
+        print("   [PASS] E'lon va rasmlari muvaffaqiyatli tahrirlandi.")
 
         # 10. Test Soft Delete Ad (DELETE /api/v1/front/ads/{id})
         print("\n10. /api/v1/front/ads/{id} (DELETE - soft delete) test qilinmoqda...")

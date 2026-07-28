@@ -5,6 +5,37 @@ from app.main import app
 
 client = TestClient(app)
 
+def get_latest_verification_code(email: str) -> str:
+    async def _fetch():
+        from app.database import async_session_local
+        from app.models.user import User
+        from app.models.verification import VerificationCode
+        from sqlalchemy.future import select
+        async with async_session_local() as db:
+            res = await db.execute(
+                select(VerificationCode)
+                .join(User)
+                .where(User.email == email)
+                .order_by(VerificationCode.id.desc())
+            )
+            code_obj = res.scalars().first()
+            return code_obj.code if code_obj else None
+    return asyncio.run(_fetch())
+
+def ensure_user_active(email: str):
+    async def _activate():
+        from app.database import async_session_local
+        from app.models.user import User
+        from sqlalchemy.future import select
+        async with async_session_local() as db:
+            res = await db.execute(select(User).where(User.email == email))
+            u = res.scalar_one_or_none()
+            if u and not u.is_active:
+                u.is_active = True
+                u.is_verified = True
+                await db.commit()
+    asyncio.run(_activate())
+
 def run_tests():
     print("Mobile API Endpointlarini test qilish boshlandi...\n")
     client.__enter__()
@@ -22,15 +53,17 @@ def run_tests():
         if reg_response.status_code == 201:
             print("   [PASS] Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi.")
             # Akkauntni faollashtirish (verify)
+            v_code = get_latest_verification_code(test_user_data["email"])
             verify_data = {
                 "username": test_user_data["email"],
-                "code": reg_response.json()["verification_code"]
+                "code": v_code
             }
             verify_res = client.post("/api/v1/mobile/auth/verify", json=verify_data)
             assert verify_res.status_code == 200, f"Verification failed: {verify_res.text}"
             print("   [PASS] Foydalanuvchi akkaunti faollashtirildi.")
         elif reg_response.status_code == 400 and "tizimda ro'yxatdan o'tgan" in reg_response.json().get("detail", ""):
             print("   [INFO] Foydalanuvchi allaqachon mavjud, davom etamiz.")
+            ensure_user_active(test_user_data["email"])
         else:
             print(f"   [FAIL] Ro'yxatdan o'tishda xatolik: {reg_response.status_code} - {reg_response.text}")
             sys.exit(1)
