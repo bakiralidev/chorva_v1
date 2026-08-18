@@ -67,6 +67,34 @@ async def migrate_production():
             "desc": "users.auth_provider ustuni qo'shish",
             "sql": "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'local' NOT NULL"
         },
+
+        # ============================================================
+        # 3. v2.0 — Telegram Mini App uchun yangi ustunlar
+        # ============================================================
+        {
+            "desc": "users.first_name ustuni qo'shish",
+            "sql": "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(150)"
+        },
+        {
+            "desc": "users.last_name ustuni qo'shish",
+            "sql": "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(150)"
+        },
+        {
+            "desc": "users.preferred_lang ustuni qo'shish",
+            "sql": "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_lang VARCHAR(10)"
+        },
+        {
+            "desc": "users.telegram_username ustuni qo'shish",
+            "sql": "ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(100)"
+        },
+        {
+            "desc": "telegram_links.full_name ustuni qo'shish",
+            "sql": "ALTER TABLE telegram_links ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)"
+        },
+        {
+            "desc": "telegram_links.lang ustuni qo'shish",
+            "sql": "ALTER TABLE telegram_links ADD COLUMN IF NOT EXISTS lang VARCHAR(10) DEFAULT 'uz'"
+        },
     ]
 
     async with engine.begin() as conn:
