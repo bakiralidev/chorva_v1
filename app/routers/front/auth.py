@@ -24,7 +24,11 @@ from app.database import get_db
 from app.models.user import User
 from app.models.verification import VerificationCode
 from app.models.telegram_link import TelegramLink
-from app.schemas.user import UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate
+from app.schemas.user import (
+    UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate,
+    UserNameUpdate, EmailChangeRequest, EmailChangeConfirm,
+    PasswordChange, PhoneChangeRequest, PhoneChangeConfirm, MessageResponse
+)
 from app.schemas.token import Token, TokenRefreshRequest
 from app.auth.security import hash_password, verify_password, create_access_token, generate_refresh_token
 from app.auth.dependencies import get_current_user
@@ -41,6 +45,12 @@ from datetime import datetime, timedelta
 logger = logging.getLogger("app.auth")
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# Avatar fayllarini saqlash joyi
+import os
+from fastapi import UploadFile, File
+AVATAR_DIR = os.path.join("uploads", "avatars")
+os.makedirs(AVATAR_DIR, exist_ok=True)
 
 
 async def create_user_refresh_token(db: AsyncSession, user_id: uuid.UUID) -> str:
@@ -536,3 +546,356 @@ async def logout(
         await db.commit()
 
     return {"message": "Tizimdan muvaffaqiyatli chiqildi."}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PROFIL TAHRIRLASH ENDPOINTLARI
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.put(
+    "/me/name",
+    response_model=UserResponse,
+    tags=["Profile"],
+    summary="Ism va familyani yangilash",
+    description="""
+### Foydalanuvchi ism va familyasini yangilash
+
+Token kerak. OTP talab qilinmaydi — darhol o'zgaradi.
+
+**So'rov maydonlari:**
+- `first_name` — ism (kamida 2 belgi)
+- `last_name` — familya (kamida 2 belgi)
+
+**Muayyan Xatoliklar:**
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def update_name(
+    body: UserNameUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    current_user.first_name = body.first_name
+    current_user.last_name = body.last_name
+    current_user.full_name = f"{body.first_name} {body.last_name}"
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post(
+    "/me/email/request-change",
+    response_model=MessageResponse,
+    tags=["Profile"],
+    summary="Email o'zgartirish — OTP yuborish",
+    description="""
+### Yangi emailga OTP kodi yuborish
+
+Foydalanuvchi yangi email kiritganda, shu emailga 6 xonali OTP kodi yuboriladi.
+Tasdiqlash uchun `/me/email/confirm-change` endpointiga murojaat qiling.
+
+**Talablar:**
+- Token kerak
+- Yangi email boshqa foydalanuvchida mavjud bo'lmasligi shart
+
+**Muayyan Xatoliklar:**
+- **400**: Bu email allaqachon ro'yxatdan o'tgan
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def request_email_change(
+    body: EmailChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Email boshqa foydalanuvchida borligini tekshiramiz
+    result = await db.execute(select(User).where(User.email == body.new_email))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ushbu email allaqachon ro'yxatdan o'tgan."
+        )
+
+    # Avvalgi tasdiqlash kodlarini o'chirish
+    old_codes = await db.execute(
+        select(VerificationCode).where(VerificationCode.user_id == current_user.id)
+    )
+    for old in old_codes.scalars().all():
+        await db.delete(old)
+
+    code = ''.join(random.choices(string.digits, k=6))
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    db.add(VerificationCode(user_id=current_user.id, code=code, expires_at=expires_at))
+    await db.commit()
+
+    await send_otp_email(body.new_email, code)
+    logger.info("Email o'zgartirish OTP yuborildi: %s → %s", current_user.email, body.new_email)
+    return {"message": f"Tasdiqlash kodi {body.new_email} manziliga yuborildi."}
+
+
+@router.post(
+    "/me/email/confirm-change",
+    response_model=UserResponse,
+    tags=["Profile"],
+    summary="Email o'zgartirish — OTP tasdiqlash",
+    description="""
+### OTP kod bilan yangi emailni tasdiqlash
+
+Avval `/me/email/request-change` orqali yuborilgan OTP kodni kiriting.
+To'g'ri bo'lsa email yangilanadi.
+
+**Muayyan Xatoliklar:**
+- **400**: Kod noto'g'ri yoki muddati tugagan
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def confirm_email_change(
+    body: EmailChangeConfirm,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    v_result = await db.execute(
+        select(VerificationCode)
+        .where(VerificationCode.user_id == current_user.id)
+        .order_by(VerificationCode.created_at.desc())
+    )
+    verification = v_result.scalars().first()
+
+    if not verification:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi topilmadi. Qaytadan so'rang.")
+    if verification.is_expired:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi muddati tugagan.")
+    if verification.code != body.code:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi noto'g'ri.")
+
+    current_user.email = body.new_email
+    await db.delete(verification)
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.put(
+    "/me/password",
+    response_model=MessageResponse,
+    tags=["Profile"],
+    summary="Parolni o'zgartirish",
+    description="""
+### Foydalanuvchi parolini o'zgartirish
+
+Eski parolni kiritib, yangi parolni o'rnatish.
+
+**Talablar:**
+- Token kerak
+- Google orqali kirgan foydalanuvchilar bu endpointdan foydalana olmaydi
+- Yangi parol kamida 6 ta belgi bo'lishi shart
+
+**Muayyan Xatoliklar:**
+- **400**: Eski parol noto'g'ri
+- **400**: Google OAuth2 foydalanuvchisi (paroli yo'q)
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def change_password(
+    body: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.auth_provider == "google" or current_user.hashed_password is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Google orqali kirgan foydalanuvchilar parol o'zgartira olmaydi."
+        )
+    if not verify_password(body.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Eski parol noto'g'ri.")
+
+    current_user.hashed_password = hash_password(body.new_password)
+    db.add(current_user)
+    await db.commit()
+    return {"message": "Parol muvaffaqiyatli o'zgartirildi."}
+
+
+@router.post(
+    "/me/avatar",
+    response_model=UserResponse,
+    tags=["Profile"],
+    summary="Avatar (profil rasmi) yuklash",
+    description="""
+### Foydalanuvchi profil rasmini yuklash yoki yangilash
+
+Rasm `multipart/form-data` formatida yuboriladi.
+Qabul qilinadigan formatlar: `jpg`, `jpeg`, `png`, `webp`.
+Maksimal o'lcham: **5 MB**.
+
+**So'rov:**
+```
+POST /api/v1/front/auth/me/avatar
+Content-Type: multipart/form-data
+
+file: <rasm fayli>
+```
+
+**Muayyan Xatoliklar:**
+- **400**: Noto'g'ri fayl formati (faqat jpg/png/webp)
+- **400**: Fayl hajmi 5 MB dan katta
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def upload_avatar(
+    file: UploadFile = File(..., description="Profil rasmi (jpg/png/webp, max 5MB)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Format tekshiruvi
+    allowed = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+    if file.content_type not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Faqat jpg, png, webp formatdagi rasmlar qabul qilinadi."
+        )
+
+    # Hajm tekshiruvi (5 MB)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Fayl hajmi 5 MB dan oshmasligi kerak.")
+
+    # Saqlash
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    filename = f"{current_user.id}.{ext}"
+    filepath = os.path.join(AVATAR_DIR, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    # URL — /uploads static mount orqali xizmat qilinadi
+    current_user.avatar_url = f"/uploads/avatars/{filename}"
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post(
+    "/me/phone/request-change",
+    response_model=MessageResponse,
+    tags=["Profile"],
+    summary="Telefon raqam qo'shish/o'zgartirish — Telegram OTP",
+    description="""
+### Telefon raqamni qo'shish yoki o'zgartirish
+
+Ko'rsatilgan telefon raqam Telegram botda avval ro'yxatdan o'tgan bo'lishi shart
+(foydalanuvchi @chorva_uzbot ga `/start` bosib telefon ulashgan bo'lishi kerak).
+
+**Oqim:**
+1. Bu endpointga yangi telefon raqamni yuboring
+2. Telegram botga OTP kodi keladi
+3. `/me/phone/confirm-change` endpointida kodni tasdiqlang
+
+**Muayyan Xatoliklar:**
+- **400**: Bu telefon raqam boshqa foydalanuvchida ro'yxatdan o'tgan
+- **404**: Bu telefon raqam Telegram botda ro'yxatdan o'tmagan (avval botga `/start` bering)
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def request_phone_change(
+    body: PhoneChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Bu nomer boshqa user da borligini tekshiramiz
+    result = await db.execute(
+        select(User).where(User.phone_number == body.phone_number)
+    )
+    existing_user = result.scalar_one_or_none()
+    if existing_user and existing_user.id != current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Bu telefon raqam allaqachon boshqa foydalanuvchida ro'yxatdan o'tgan."
+        )
+
+    # Telegram link mavjudligini tekshiramiz
+    tg_result = await db.execute(
+        select(TelegramLink).where(TelegramLink.phone_number == body.phone_number)
+    )
+    tg_link = tg_result.scalar_one_or_none()
+    if not tg_link:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Bu telefon raqam Telegram botda topilmadi. "
+                "Avval @chorva_uzbot ga /start bosib, telefon raqamingizni ulashing."
+            )
+        )
+
+    # Avvalgi kodlarni o'chirish
+    old_codes = await db.execute(
+        select(VerificationCode).where(VerificationCode.user_id == current_user.id)
+    )
+    for old in old_codes.scalars().all():
+        await db.delete(old)
+
+    code = ''.join(random.choices(string.digits, k=6))
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    db.add(VerificationCode(user_id=current_user.id, code=code, expires_at=expires_at))
+    await db.commit()
+
+    await send_otp_via_telegram(tg_link.chat_id, code, body.phone_number)
+    logger.info("Telefon o'zgartirish OTP yuborildi: chat_id=%s", tg_link.chat_id)
+    return {"message": "Tasdiqlash kodi Telegram botga yuborildi. @chorva_uzbot ni tekshiring."}
+
+
+@router.post(
+    "/me/phone/confirm-change",
+    response_model=UserResponse,
+    tags=["Profile"],
+    summary="Telefon raqam o'zgartirish — OTP tasdiqlash",
+    description="""
+### OTP kod bilan yangi telefon raqamni tasdiqlash
+
+Avval `/me/phone/request-change` orqali Telegram botga yuborilgan OTP kodni kiriting.
+To'g'ri bo'lsa telefon raqam yangilanadi va Telegram chat_id saqlanadi.
+
+**Muayyan Xatoliklar:**
+- **400**: Kod noto'g'ri yoki muddati tugagan
+- **401**: Token yuborilmagan yoki noto'g'ri
+""",
+)
+async def confirm_phone_change(
+    body: PhoneChangeConfirm,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    v_result = await db.execute(
+        select(VerificationCode)
+        .where(VerificationCode.user_id == current_user.id)
+        .order_by(VerificationCode.created_at.desc())
+    )
+    verification = v_result.scalars().first()
+
+    if not verification:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi topilmadi. Qaytadan so'rang.")
+    if verification.is_expired:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi muddati tugagan.")
+    if verification.code != body.code:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kodi noto'g'ri.")
+
+    # Telefon raqamni yangilash
+    current_user.phone_number = body.phone_number
+
+    # Telegram chat_id ni ham saqlaymiz
+    tg_result = await db.execute(
+        select(TelegramLink).where(TelegramLink.phone_number == body.phone_number)
+    )
+    tg_link = tg_result.scalar_one_or_none()
+    if tg_link:
+        current_user.telegram_chat_id = tg_link.chat_id
+
+    await db.delete(verification)
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+

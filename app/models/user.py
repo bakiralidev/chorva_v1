@@ -28,9 +28,11 @@ class User(Base):
     # Google OAuth2 ma'lumotlari
     google_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
-    # Kirish usuli: "local" | "google"
+    # Kirish usuli: "local" | "google" | "telegram"
     auth_provider: Mapped[str] = mapped_column(String(20), default="local", nullable=False)
 
     # Relationships
