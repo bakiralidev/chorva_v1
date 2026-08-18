@@ -27,7 +27,8 @@ from app.models.telegram_link import TelegramLink
 from app.schemas.user import (
     UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate,
     UserNameUpdate, EmailChangeRequest, EmailChangeConfirm,
-    PasswordChange, PhoneChangeRequest, PhoneChangeConfirm, MessageResponse
+    PasswordChange, PhoneChangeRequest, PhoneChangeConfirm, MessageResponse,
+    TelegramLoginRequest
 )
 from app.schemas.token import Token, TokenRefreshRequest
 from app.auth.security import hash_password, verify_password, create_access_token, generate_refresh_token
@@ -40,6 +41,9 @@ import random
 import string
 import uuid
 import logging
+import hmac
+import hashlib
+from urllib.parse import parse_qsl, unquote
 from datetime import datetime, timedelta
 
 logger = logging.getLogger("app.auth")
@@ -899,3 +903,168 @@ async def confirm_phone_change(
     await db.refresh(current_user)
     return current_user
 
+
+# ═══════════════════════════════════════════════════════════════════
+# TELEGRAM MINI APP AUTENTIFIKATSIYA
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
+    """
+    Telegram WebApp initData ni HMAC-SHA256 bilan tekshiradi.
+    To'g'ri bo'lsa foydalanuvchi ma'lumotlarini dict shaklida qaytaradi.
+    Noto'g'ri bo'lsa None qaytaradi.
+
+    Telegram rasmiy hujjatlashtirish:
+    https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+    """
+    try:
+        # initData ni parse qilamiz
+        params = dict(parse_qsl(init_data, keep_blank_values=True))
+        received_hash = params.pop("hash", None)
+        if not received_hash:
+            return None
+
+        # data_check_string: kalitlarni alifbo tartibida saralab, \n bilan qo'shamiz
+        data_check_string = "\n".join(
+            f"{k}={v}" for k, v in sorted(params.items())
+        )
+
+        # Secret key: HMAC-SHA256("WebAppData", bot_token)
+        secret_key = hmac.new(
+            b"WebAppData",
+            bot_token.encode(),
+            hashlib.sha256
+        ).digest()
+
+        # Hisoblangan hash
+        computed_hash = hmac.new(
+            secret_key,
+            data_check_string.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(computed_hash, received_hash):
+            return None
+
+        # user ma'lumotlarini qaytaramiz
+        import json
+        user_data = json.loads(unquote(params.get("user", "{}")))
+        user_data["query_id"] = params.get("query_id", "")
+        user_data["auth_date"] = params.get("auth_date", "")
+        return user_data
+
+    except Exception as e:
+        logger.error("initData tekshirishda xato: %s", e)
+        return None
+
+
+@router.post(
+    "/telegram/login",
+    response_model=Token,
+    tags=["Telegram Mini App"],
+    summary="Telegram Mini App orqali avtomatik kirish",
+    description="""
+### Telegram Mini App orqali foydalanuvchini avtomatik autentifikatsiya qilish
+
+Bu endpoint Telegram Mini App ichidan chaqiriladi.
+Frontend `window.Telegram.WebApp.initData` qiymatini yuboradi,
+backend uni tekshirib, foydalanuvchini topadi va JWT token beradi.
+
+**Oqim:**
+1. Mini App ochiladi
+2. JS: `const initData = window.Telegram.WebApp.initData`
+3. `POST /auth/telegram/login` ga `{ init_data: initData }` yuboriladi
+4. Backend HMAC tekshiruvi o'tkazadi
+5. `chat_id` bo'yicha foydalanuvchi topiladi
+6. JWT `access_token` va `refresh_token` qaytariladi
+7. Foydalanuvchi login bo'ladi
+
+**Muhim:**
+- Foydalanuvchi avval bot orqali ro'yxatdan o'tgan bo'lishi shart
+- initData muddati 24 soat (Telegram tomonidan cheklanadi)
+
+**Muayyan Xatoliklar:**
+- **400**: initData noto'g'ri yoki muddati tugagan
+- **404**: Foydalanuvchi topilmadi (avval /start bosish kerak)
+""",
+)
+async def telegram_login(
+    body: TelegramLoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot sozlanmagan."
+        )
+
+    # initData ni tekshiramiz
+    user_data = _verify_telegram_init_data(
+        body.init_data,
+        settings.TELEGRAM_BOT_TOKEN
+    )
+    if not user_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram initData noto'g'ri yoki muddati tugagan."
+        )
+
+    chat_id = str(user_data.get("id", ""))
+    if not chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram user ID topilmadi."
+        )
+
+    logger.info("Telegram login urinishi: chat_id=%s", chat_id)
+
+    # Foydalanuvchini chat_id bo'yicha qidiramiz
+    result = await db.execute(
+        select(User).where(User.telegram_chat_id == chat_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # telegram_links dan qidirib ko'ramiz (eski ulangan foydalanuvchilar)
+        tg_result = await db.execute(
+            select(TelegramLink).where(TelegramLink.chat_id == chat_id)
+        )
+        tg_link = tg_result.scalar_one_or_none()
+
+        if tg_link:
+            # phone_number bo'yicha user topamiz
+            user_result = await db.execute(
+                select(User).where(User.phone_number == tg_link.phone_number)
+            )
+            user = user_result.scalar_one_or_none()
+            if user and not user.telegram_chat_id:
+                user.telegram_chat_id = chat_id
+                db.add(user)
+                await db.commit()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Foydalanuvchi topilmadi. "
+                "Avval @chorva_uzbot ga /start bosib ro'yxatdan o'ting."
+            )
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Foydalanuvchi akkaunti faol emas."
+        )
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token = await create_user_refresh_token(db, user.id)
+
+    logger.info("Telegram login muvaffaqiyatli: chat_id=%s user_id=%s", chat_id, user.id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }

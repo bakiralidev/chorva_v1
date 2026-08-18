@@ -325,3 +325,19 @@ class GoogleAuthResponse(BaseModel):
             }
         }
     )
+
+
+class TelegramLoginRequest(BaseModel):
+    """Telegram Mini App initData bilan login qilish."""
+    init_data: str = Field(
+        ...,
+        description="Telegram.WebApp.initData string (frontend JS dan olinadi)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "init_data": "query_id=AAH...&user=%7B%22id%22%3A123456789...&hash=abc123"
+            }
+        }
+    )
