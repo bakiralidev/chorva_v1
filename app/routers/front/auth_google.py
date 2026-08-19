@@ -29,6 +29,8 @@ auth_google.py — Google OAuth2 orqali tizimga kirish endpointlari.
 import logging
 import uuid
 import httpx
+import secrets
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +56,35 @@ GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 # So'ralgan ruxsatlar (scopes)
 SCOPES = "openid email profile"
+
+# CSRF state uchun oddiy in-memory store (production'da Redis ishlatilsin)
+# Key: state string, Value: expiry timestamp
+_state_store: dict[str, float] = {}
+STATE_EXPIRE_SECONDS = 600  # 10 daqiqa
+
+
+def _generate_state() -> str:
+    """CSRF himoyasi uchun kriptografik xavfsiz state token generatsiya qiladi."""
+    state = secrets.token_urlsafe(32)
+    import time
+    _state_store[state] = time.time() + STATE_EXPIRE_SECONDS
+    # Eskirgan statelarni tozalash
+    now = time.time()
+    expired = [k for k, v in _state_store.items() if v < now]
+    for k in expired:
+        del _state_store[k]
+    return state
+
+
+def _validate_state(state: str) -> bool:
+    """State tokenni tekshiradi va bazadan o'chiradi (bir martalik)."""
+    import time
+    expiry = _state_store.pop(state, None)
+    if expiry is None:
+        return False
+    if time.time() > expiry:
+        return False
+    return True
 
 
 async def _create_refresh_token_in_db(db: AsyncSession, user_id: uuid.UUID) -> str:
@@ -95,6 +126,7 @@ async def google_login():
             detail="Google OAuth2 sozlanmagan. Administrator bilan bog'laning."
         )
 
+    state = _generate_state()
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": settings.GOOGLE_REDIRECT_URI,
@@ -102,9 +134,9 @@ async def google_login():
         "scope": SCOPES,
         "access_type": "offline",
         "prompt": "select_account",
+        "state": state,
     }
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
-    auth_url = f"{GOOGLE_AUTH_URL}?{query_string}"
+    auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
     return {"authorization_url": auth_url}
 
@@ -137,7 +169,7 @@ Google `?code=...` parametri bilan redirect qilganda server:
 - `accepted_offer = True` (birinchi kirishda avtomatik)
 """,
 )
-async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
+async def google_callback(code: str, state: str | None = None, db: AsyncSession = Depends(get_db)):
     """
     Google OAuth2 callback handler.
     Google authorization code ni JWT tokenga almashtiradi.
@@ -146,6 +178,13 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Google OAuth2 sozlanmagan."
+        )
+
+    # CSRF state tekshiruvi
+    if state is None or not _validate_state(state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Xavfsizlik tekshiruvi muvaffaqiyatsiz (state noto'g'ri yoki muddati tugagan). Qaytadan urinib ko'ring."
         )
 
     # 1. Google'dan access_token olish

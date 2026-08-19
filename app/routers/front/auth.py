@@ -28,7 +28,7 @@ from app.schemas.user import (
     UserCreate, UserResponse, UserRegisterResponse, VerifyCode, UserUpdate,
     UserNameUpdate, EmailChangeRequest, EmailChangeConfirm,
     PasswordChange, PhoneChangeRequest, PhoneChangeConfirm, MessageResponse,
-    TelegramLoginRequest
+    TelegramLoginRequest, OtpRequestSchema, OtpRequestResponse, OtpVerifySchema
 )
 from app.schemas.token import Token, TokenRefreshRequest
 from app.auth.security import hash_password, verify_password, create_access_token, generate_refresh_token
@@ -1067,4 +1067,207 @@ async def telegram_login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer"
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EMAIL OTP-ONLY AUTENTIFIKATSIYA (PAROLSIZ)
+# ═══════════════════════════════════════════════════════════════════
+
+OTP_EXPIRES_SECONDS = 300  # 5 daqiqa
+
+
+@router.post(
+    "/email/request-otp",
+    response_model=OtpRequestResponse,
+    tags=["Email OTP"],
+    summary="Email OTP so'rash (parolsiz kirish/ro'yxat)",
+    description="""
+### Email OTP so'rash — parolsiz autentifikatsiya
+
+Foydalanuvchi faqat email kiritadi. Backend OTP yaratib, shu emailga yuboradi.
+User mavjud bo'lsa login uchun, yangi email bo'lsa ro'yxatdan o'tish uchun bir xil endpoint ishlatiladi.
+
+**So'rov:**
+- `email` — istalgan valid email manzil
+
+**Oqim:**
+1. Email yuboriladi
+2. OTP generatsiya qilinadi va emailga yuboriladi
+3. OTP 5 daqiqa amal qiladi
+4. Tasdiqlash uchun `/auth/email/verify-otp` ga boring
+
+**Muayyan Xatoliklar:**
+- **400**: Email noto'g'ri format
+- **503**: Email service ishlamayapti
+""",
+)
+async def request_email_otp(
+    body: OtpRequestSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Foydalanuvchi emailiga OTP yuboradi.
+    User mavjud bo'lsa yoki yangi bo'lsa — har ikki holatda ham ishlaydi.
+    """
+    email = body.email.lower().strip()
+
+    # Mavjud user ni tekshirish
+    user_result = await db.execute(select(User).where(User.email == email))
+    existing_user = user_result.scalar_one_or_none()
+
+    if existing_user:
+        # Mavjud user — oldingi kodlarni o'chirib yangi kod yaratamiz
+        old_codes = await db.execute(
+            select(VerificationCode).where(VerificationCode.user_id == existing_user.id)
+        )
+        for old in old_codes.scalars().all():
+            await db.delete(old)
+
+        code = ''.join(random.choices(string.digits, k=6))
+        expires_at = datetime.utcnow() + timedelta(seconds=OTP_EXPIRES_SECONDS)
+        db.add(VerificationCode(user_id=existing_user.id, code=code, expires_at=expires_at))
+        await db.commit()
+    else:
+        # Yangi user — vaqtinchalik user yaratib OTP saqlaymiz
+        # is_active=False bo'ladi, OTP tasdiqlanganda True ga o'tadi
+        new_user = User(
+            email=email,
+            hashed_password=None,
+            is_active=False,
+            is_verified=False,
+            accepted_offer=False,
+            is_superuser=False,
+            auth_provider="local",
+        )
+        db.add(new_user)
+        await db.flush()
+
+        code = ''.join(random.choices(string.digits, k=6))
+        expires_at = datetime.utcnow() + timedelta(seconds=OTP_EXPIRES_SECONDS)
+        db.add(VerificationCode(user_id=new_user.id, code=code, expires_at=expires_at))
+        await db.commit()
+
+    # OTP ni emailga yuborish
+    sent = await send_otp_email(email, code)
+    if not sent:
+        # SMTP ishlamasa console fallback
+        logger.warning("Email OTP CONSOLE FALLBACK [%s]", email)
+        print(f"\n{'='*50}")
+        print(f"[EMAIL OTP] {email} uchun kod: {code}")
+        print(f"{'='*50}\n")
+
+    logger.info("Email OTP so'raldi: email=%s", email)
+    return {
+        "message": f"Tasdiqlash kodi {email} manziliga yuborildi.",
+        "expires_in": OTP_EXPIRES_SECONDS,
+    }
+
+
+@router.post(
+    "/email/verify-otp",
+    tags=["Email OTP"],
+    summary="Email OTP tasdiqlash va token olish",
+    description="""
+### Email OTP tasdiqlash — token olish
+
+`/auth/email/request-otp` orqali yuborilgan kodni tasdiqlash.
+To'g'ri bo'lsa `access_token` va `refresh_token` qaytariladi.
+User yangi bo'lsa — avtomatik ro'yxatdan o'tadi.
+User mavjud bo'lsa — login bo'ladi.
+
+**So'rov:**
+- `email` — OTP yuborilgan email manzil
+- `code` — 6 xonali OTP kodi
+
+**Javob:**
+- `access_token`, `refresh_token`, `token_type`, `user`
+
+**Muayyan Xatoliklar:**
+- **404**: Bu email bilan hech qanday OTP so'ralmagan
+- **400**: Kod muddati tugagan (5 daqiqa)
+- **400**: Kod noto'g'ri
+""",
+)
+async def verify_email_otp(
+    body: OtpVerifySchema,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Email OTP ni tekshiradi va JWT tokenlar qaytaradi.
+    Yangi user bo'lsa ro'yxatdan o'tkazadi, mavjud bo'lsa login qiladi.
+    """
+    email = body.email.lower().strip()
+
+    # Userni email bo'yicha topish
+    user_result = await db.execute(select(User).where(User.email == email))
+    user = user_result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bu email uchun OTP so'ralmagan. Avval /auth/email/request-otp ga murojaat qiling."
+        )
+
+    # Eng so'nggi OTP ni olish
+    v_result = await db.execute(
+        select(VerificationCode)
+        .where(VerificationCode.user_id == user.id)
+        .order_by(VerificationCode.created_at.desc())
+    )
+    verification = v_result.scalars().first()
+
+    if not verification:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tasdiqlash kodi topilmadi. Qaytadan /auth/email/request-otp ga murojaat qiling."
+        )
+
+    if verification.is_expired:
+        await db.delete(verification)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tasdiqlash kodi muddati tugagan (5 daqiqa). Qaytadan so'rang."
+        )
+
+    if verification.code != body.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tasdiqlash kodi noto'g'ri."
+        )
+
+    # OTP to'g'ri — userni faollashtirish
+    user.is_verified = True
+    user.is_active = True
+    user.accepted_offer = True
+
+    # OTP ni o'chirish (bir marta ishlatiladi)
+    await db.delete(verification)
+    await db.commit()
+    await db.refresh(user)
+
+    # JWT tokenlar yaratish
+    access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token_str = await create_user_refresh_token(db, user.id)
+
+    logger.info("Email OTP tasdiqlandi: email=%s user_id=%s", email, user.id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token_str,
+        "token_type": "bearer",
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "phone_number": user.phone_number,
+            "full_name": user.full_name,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "avatar_url": user.avatar_url,
+            "auth_provider": user.auth_provider,
+            "is_active": user.is_active,
+            "is_superuser": user.is_superuser,
+            "created_at": user.created_at.isoformat(),
+        }
     }
